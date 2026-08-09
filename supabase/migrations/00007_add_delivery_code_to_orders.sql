@@ -1,0 +1,3 @@
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_code TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS paystack_reference TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'wallet';
