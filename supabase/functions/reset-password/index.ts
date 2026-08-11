@@ -74,51 +74,18 @@ Deno.serve(async (req) => {
       return json({ success: true });
     }
 
-    // Use Admin API to generate reset link — this bypasses redirectTo allowlist requirement
-    const { data: linkData, error: linkError } = await svc.auth.admin.generateLink({
-      type: 'recovery',
-      email: trimmed,
-      options: {
-        redirectTo: 'fozdropdelivery://reset-password',
-      },
+    // Send reset email with explicit Web App Redirect URL
+    const { error: resetError } = await svc.auth.resetPasswordForEmail(trimmed, {
+      redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
     });
 
-    if (linkError) {
-      console.error('reset-password: generateLink error:', linkError);
-      return json({ error: linkError.message }, 500);
+    if (resetError) {
+      console.error('reset-password error:', resetError);
+      return json({ error: resetError.message }, 500);
     }
 
     recordAttempt(trimmed);
-    console.log(`reset-password: link generated for ${trimmed}, token_hash=${linkData?.properties?.hashed_token?.slice(0, 8)}...`);
-
-    // Send the email using Supabase's built-in mailer via the reset link
-    // The generateLink response contains action_link — we email it ourselves
-    // OR we use the lower-level resetPasswordForEmail which triggers Supabase's mailer
-    // generateLink alone doesn't send email; use admin.resetPasswordForEmail via REST
-    const resetRes = await fetch(`${supabaseUrl}/auth/v1/recover`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': serviceRoleKey,
-        'Authorization': `Bearer ${serviceRoleKey}`,
-      },
-      body: JSON.stringify({
-        email: trimmed,
-        gotrue_meta_security: {},
-      }),
-    });
-
-    const resetBody = await resetRes.text();
-    console.log(`reset-password: /auth/v1/recover status=${resetRes.status} body=${resetBody}`);
-
-    if (!resetRes.ok) {
-      let errMsg = 'Failed to send reset email';
-      try {
-        const parsed = JSON.parse(resetBody);
-        errMsg = parsed.msg || parsed.message || parsed.error_description || errMsg;
-      } catch { /* ignore */ }
-      return json({ error: errMsg }, resetRes.status);
-    }
+    console.log(`reset-password: email sent successfully to ${trimmed}`);
 
     return json({ success: true });
 
