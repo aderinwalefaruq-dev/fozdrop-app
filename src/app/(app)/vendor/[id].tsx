@@ -27,10 +27,10 @@ export default function VendorStoreView() {
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
-    if (!id || !session?.user?.id) { setLoading(false); return; }
+    if (!id) { setLoading(false); return; }
     const v = await getVendorById(id);
     setVendor(v);
-    const isOwner = v?.owner_id === session.user.id;
+    const isOwner = session?.user?.id ? v?.owner_id === session.user.id : false;
     const [menu, secs] = await Promise.all([
       isOwner ? getMenuByVendor(id) : getActiveMenuByVendor(id),
       getSectionsByVendor(id),
@@ -237,5 +237,3 @@ function MenuItemRow({
     </View>
   );
 }
-
-
