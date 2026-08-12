@@ -83,11 +83,11 @@ export async function createVendor(ownerId: string, name: string): Promise<Vendo
 }
 
 // =====================
-// Menu Sections
+// Menu Sections (Categories Table)
 // =====================
 export async function getSectionsByVendor(vendorId: string): Promise<MenuSection[]> {
   const { data } = await supabase
-    .from('menu_sections')
+    .from('categories')
     .select('*')
     .eq('vendor_id', vendorId)
     .order('sort_order', { ascending: true });
@@ -96,7 +96,7 @@ export async function getSectionsByVendor(vendorId: string): Promise<MenuSection
 
 export async function addMenuSection(vendorId: string, name: string, sortOrder: number): Promise<MenuSection | null> {
   const { data } = await supabase
-    .from('menu_sections')
+    .from('categories')
     .insert({ vendor_id: vendorId, name: name.trim(), sort_order: sortOrder })
     .select('*')
     .maybeSingle();
@@ -104,15 +104,15 @@ export async function addMenuSection(vendorId: string, name: string, sortOrder: 
 }
 
 export async function deleteMenuSection(id: string): Promise<void> {
-  await supabase.from('menu_sections').delete().eq('id', id);
+  await supabase.from('categories').delete().eq('id', id);
 }
 
 // =====================
-// Menus
+// Menus (Products Table)
 // =====================
 export async function getMenuByVendor(vendorId: string): Promise<MenuItem[]> {
   const { data } = await supabase
-    .from('menus')
+    .from('products')
     .select('*')
     .eq('vendor_id', vendorId)
     .order('created_at', { ascending: true });
@@ -121,7 +121,7 @@ export async function getMenuByVendor(vendorId: string): Promise<MenuItem[]> {
 
 export async function getActiveMenuByVendor(vendorId: string): Promise<MenuItem[]> {
   const { data } = await supabase
-    .from('menus')
+    .from('products')
     .select('*')
     .eq('vendor_id', vendorId)
     .eq('is_active', true)
@@ -130,19 +130,19 @@ export async function getActiveMenuByVendor(vendorId: string): Promise<MenuItem[
 }
 
 export async function toggleMenuItemActive(id: string, isActive: boolean): Promise<void> {
-  await supabase.from('menus').update({ is_active: isActive }).eq('id', id);
+  await supabase.from('products').update({ is_active: isActive }).eq('id', id);
 }
 
 export async function addMenuItem(item: Omit<MenuItem, 'id' | 'created_at'>): Promise<void> {
-  await supabase.from('menus').insert(item);
+  await supabase.from('products').insert(item);
 }
 
 export async function updateMenuItem(id: string, updates: Partial<Omit<MenuItem, 'id' | 'created_at'>>): Promise<void> {
-  await supabase.from('menus').update(updates).eq('id', id);
+  await supabase.from('products').update(updates).eq('id', id);
 }
 
 export async function deleteMenuItem(id: string): Promise<void> {
-  await supabase.from('menus').delete().eq('id', id);
+  await supabase.from('products').delete().eq('id', id);
 }
 
 // =====================
@@ -168,14 +168,6 @@ export async function getWallet(userId: string): Promise<Wallet | null> {
   return data;
 }
 
-// NOTE: There is intentionally no client-side "topUpWallet" helper.
-// Wallet credits happen exclusively through the Paystack webhook
-// (server-verified payment) using the service-role key. A client-callable
-// function that could increment `customer_balance` directly would let
-// any signed-in user mint themselves unlimited money — see the RLS fix
-// in migration 00032 which also removed the client's UPDATE privilege
-// on the wallets table for the same reason.
-
 export async function getTransactions(userId: string): Promise<Transaction[]> {
   const wallet = await getWallet(userId);
   if (!wallet) return [];
@@ -187,14 +179,6 @@ export async function getTransactions(userId: string): Promise<Transaction[]> {
     .limit(50);
   return Array.isArray(data) ? data : [];
 }
-
-// NOTE: Vendor withdrawals go exclusively through the `requestWithdrawal`
-// function below, which calls the request-withdrawal Edge Function. That
-// function verifies the caller's Vendor role server-side, atomically
-// reserves the balance, and requires saved bank details before recording
-// a request. A client-side helper that directly decremented
-// `vendor_balance` (as previously existed here) relied on the same
-// insecure RLS policy fixed in migration 00032, and has been removed.
 
 // =====================
 // Bank Details
@@ -233,8 +217,6 @@ export async function requestWithdrawal(
       body: { amount },
     });
     if (error) {
-      // Extract the real error message from the Edge Function response body
-      // FunctionsHttpError stores the raw Response in error.context
       const ctx = (error as { context?: Response }).context;
       if (ctx) {
         try {
@@ -313,7 +295,6 @@ export async function buyDeliveryPass(customerId: string): Promise<{ success: bo
 // Referral System
 // =====================
 export async function getReferralStats(userId: string): Promise<ReferralStats | null> {
-  // Get referral_code from profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('referral_code')
@@ -321,13 +302,11 @@ export async function getReferralStats(userId: string): Promise<ReferralStats | 
     .maybeSingle();
   if (!profile?.referral_code) return null;
 
-  // Count friends who completed first orders (rows in referral_rewards)
   const { count: totalReferred } = await supabase
     .from('referral_rewards')
     .select('id', { count: 'exact', head: true })
     .eq('referrer_id', userId);
 
-  // Count active (unused, non-expired) passes
   const now = new Date().toISOString();
   const { count: activePasses } = await supabase
     .from('free_delivery_passes')
@@ -361,7 +340,7 @@ export async function saveReferredBy(userId: string, referralCode: string): Prom
     .from('profiles')
     .update({ referred_by: referralCode.trim().toUpperCase() })
     .eq('id', userId)
-    .is('referred_by', null); // only set once, never overwrite
+    .is('referred_by', null);
   return !error;
 }
 
@@ -415,11 +394,6 @@ export async function updateOrderStatus(
   status: Order['status'],
   runnerId?: string
 ): Promise<{ error: string | null }> {
-  // When an Operator advances an order, stamp them as the runner handling
-  // it. Without this the `runner_id` column was never populated anywhere
-  // in the normal flow, so admin screens showing "runner" / "rider" per
-  // order were always blank, and there was no record of which operator
-  // actually delivered a given order.
   const updates: Partial<Order> = runnerId ? { status, runner_id: runnerId } : { status };
   const { error } = await supabase.from('orders').update(updates).eq('id', orderId);
   return { error: error?.message ?? null };
@@ -461,7 +435,7 @@ export async function getAppSetting(key: string): Promise<string | null> {
 
 export async function getAppIsOpen(): Promise<boolean> {
   const val = await getAppSetting('is_open');
-  return val !== 'false'; // defaults to open if missing
+  return val !== 'false';
 }
 
 export async function setAppIsOpen(isOpen: boolean): Promise<void> {
@@ -520,7 +494,6 @@ export async function getUserSupportRequests(userId: string): Promise<SupportReq
 // SUPER ADMIN API
 // ============================================================================
 
-// ── KPIs ─────────────────────────────────────────────────────────────────────
 export async function getAdminKPIs(): Promise<AdminKPIs> {
   const activeStatuses = ['Pending', 'Preparing', 'Out for Delivery', 'Arrived at Dropoff'];
 
@@ -545,7 +518,6 @@ export async function getAdminKPIs(): Promise<AdminKPIs> {
   };
 }
 
-// ── Live order feed ───────────────────────────────────────────────────────────
 export async function getAdminLiveOrders(limit = 30): Promise<AdminOrderRow[]> {
   const { data } = await supabase
     .from('orders')
@@ -566,7 +538,6 @@ export async function getAdminLiveOrders(limit = 30): Promise<AdminOrderRow[]> {
   }));
 }
 
-// ── All orders (with filters) ─────────────────────────────────────────────────
 export async function getAdminOrders(opts: {
   vendorId?: string;
   status?: string;
@@ -602,7 +573,6 @@ export async function getAdminOrders(opts: {
   }));
 }
 
-// ── All vendors (admin) ────────────────────────────────────────────────────────
 export async function getAdminVendors(): Promise<Vendor[]> {
   const { data } = await supabase
     .from('vendors')
@@ -622,22 +592,21 @@ export async function adminDeleteVendor(id: string): Promise<void> {
   await supabase.from('vendors').delete().eq('id', id);
 }
 
-// ── Menu editing (admin) ───────────────────────────────────────────────────────
+// ── Menu editing (admin - products table) ──────────────────────────────────────
 export async function adminUpsertMenuItem(
   item: Partial<MenuItem> & { vendor_id: string; item_name: string; price: number }
 ): Promise<void> {
   if (item.id) {
-    await supabase.from('menus').update(item).eq('id', item.id);
+    await supabase.from('products').update(item).eq('id', item.id);
   } else {
-    await supabase.from('menus').insert(item);
+    await supabase.from('products').insert(item);
   }
 }
 
 export async function adminDeleteMenuItem(id: string): Promise<void> {
-  await supabase.from('menus').delete().eq('id', id);
+  await supabase.from('products').delete().eq('id', id);
 }
 
-// ── Customer management ────────────────────────────────────────────────────────
 export async function getAdminCustomers(limit = 50, offset = 0): Promise<AdminCustomerRow[]> {
   const { data: profiles } = await supabase
     .from('profiles')
@@ -679,7 +648,6 @@ export async function getAdminCustomers(limit = 50, offset = 0): Promise<AdminCu
   }));
 }
 
-// ── Transactions (admin) ──────────────────────────────────────────────────────
 export async function getAdminTransactions(opts: {
   dateFrom?: string;
   dateTo?: string;
@@ -711,12 +679,10 @@ export async function getAdminTransactions(opts: {
   }));
 }
 
-// ── App settings helpers ──────────────────────────────────────────────────────
 export async function setAppSetting(key: string, value: string): Promise<void> {
   await supabase.from('app_settings').update({ value }).eq('key', key);
 }
 
-// ── Operators list (for rider reassignment) ────────────────────────────────────
 export async function getOperators(): Promise<Pick<Profile, 'id' | 'name'>[]> {
   const { data } = await supabase
     .from('profiles')
@@ -727,7 +693,6 @@ export async function getOperators(): Promise<Pick<Profile, 'id' | 'name'>[]> {
   return Array.isArray(data) ? data : [];
 }
 
-// ── Analytics ─────────────────────────────────────────────────────────────────
 export async function getAdminPeakHours(): Promise<PeakHourData[]> {
   const { data } = await supabase
     .from('orders')
@@ -782,17 +747,7 @@ export async function getAdminHotspots(): Promise<HotspotData[]> {
     .sort((a, b) => b.order_count - a.order_count);
 }
 
-// Renamed from `getAdminAvgFulfillmentMs`: despite the old name, the
-// caller (analytics.tsx) always treated the return value as *minutes*
-// (rendered as `${value} min`) — the old implementation happened to
-// return a small fake number in that same range
-// (`Math.round(18 + Math.random() * 7)`), which is what let the unit
-// mismatch go unnoticed. This version returns real minutes.
 export async function getAdminAvgFulfillmentMinutes(): Promise<number> {
-  // Uses the `completed_at` column (set automatically by the
-  // order_status_history trigger added in migration 00032) instead of
-  // the previous random placeholder, which displayed a fabricated number
-  // to admins as if it were real analytics.
   const { data } = await supabase
     .from('orders')
     .select('created_at, completed_at')
@@ -810,10 +765,9 @@ export async function getAdminAvgFulfillmentMinutes(): Promise<number> {
   if (durationsMs.length === 0) return 0;
 
   const avgMs = durationsMs.reduce((sum, ms) => sum + ms, 0) / durationsMs.length;
-  return Math.round(avgMs / 60000); // ms → minutes
+  return Math.round(avgMs / 60000);
 }
 
-// ── Announcements ─────────────────────────────────────────────────────────────
 export async function getAnnouncements(limit = 20): Promise<Announcement[]> {
   const { data } = await supabase
     .from('announcements')
