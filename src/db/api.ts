@@ -83,11 +83,11 @@ export async function createVendor(ownerId: string, name: string): Promise<Vendo
 }
 
 // =====================
-// Menu Sections (Categories Table)
+// Menu Sections (Menu Sections Table)
 // =====================
 export async function getSectionsByVendor(vendorId: string): Promise<MenuSection[]> {
   const { data } = await supabase
-    .from('categories')
+    .from('menu_sections')
     .select('*')
     .eq('vendor_id', vendorId)
     .order('sort_order', { ascending: true });
@@ -96,7 +96,7 @@ export async function getSectionsByVendor(vendorId: string): Promise<MenuSection
 
 export async function addMenuSection(vendorId: string, name: string, sortOrder: number): Promise<MenuSection | null> {
   const { data } = await supabase
-    .from('categories')
+    .from('menu_sections')
     .insert({ vendor_id: vendorId, name: name.trim(), sort_order: sortOrder })
     .select('*')
     .maybeSingle();
@@ -104,15 +104,15 @@ export async function addMenuSection(vendorId: string, name: string, sortOrder: 
 }
 
 export async function deleteMenuSection(id: string): Promise<void> {
-  await supabase.from('categories').delete().eq('id', id);
+  await supabase.from('menu_sections').delete().eq('id', id);
 }
 
 // =====================
-// Menus (Products Table)
+// Menus (Menus Table)
 // =====================
 export async function getMenuByVendor(vendorId: string): Promise<MenuItem[]> {
   const { data } = await supabase
-    .from('products')
+    .from('menus')
     .select('*')
     .eq('vendor_id', vendorId)
     .order('created_at', { ascending: true });
@@ -121,7 +121,7 @@ export async function getMenuByVendor(vendorId: string): Promise<MenuItem[]> {
 
 export async function getActiveMenuByVendor(vendorId: string): Promise<MenuItem[]> {
   const { data } = await supabase
-    .from('products')
+    .from('menus')
     .select('*')
     .eq('vendor_id', vendorId)
     .eq('is_active', true)
@@ -130,19 +130,19 @@ export async function getActiveMenuByVendor(vendorId: string): Promise<MenuItem[
 }
 
 export async function toggleMenuItemActive(id: string, isActive: boolean): Promise<void> {
-  await supabase.from('products').update({ is_active: isActive }).eq('id', id);
+  await supabase.from('menus').update({ is_active: isActive }).eq('id', id);
 }
 
 export async function addMenuItem(item: Omit<MenuItem, 'id' | 'created_at'>): Promise<void> {
-  await supabase.from('products').insert(item);
+  await supabase.from('menus').insert(item);
 }
 
 export async function updateMenuItem(id: string, updates: Partial<Omit<MenuItem, 'id' | 'created_at'>>): Promise<void> {
-  await supabase.from('products').update(updates).eq('id', id);
+  await supabase.from('menus').update(updates).eq('id', id);
 }
 
 export async function deleteMenuItem(id: string): Promise<void> {
-  await supabase.from('products').delete().eq('id', id);
+  await supabase.from('menus').delete().eq('id', id);
 }
 
 // =====================
@@ -592,19 +592,19 @@ export async function adminDeleteVendor(id: string): Promise<void> {
   await supabase.from('vendors').delete().eq('id', id);
 }
 
-// ── Menu editing (admin - products table) ──────────────────────────────────────
+// ── Menu editing (admin - menus table) ──────────────────────────────────────
 export async function adminUpsertMenuItem(
   item: Partial<MenuItem> & { vendor_id: string; item_name: string; price: number }
 ): Promise<void> {
   if (item.id) {
-    await supabase.from('products').update(item).eq('id', item.id);
+    await supabase.from('menus').update(item).eq('id', item.id);
   } else {
-    await supabase.from('products').insert(item);
+    await supabase.from('menus').insert(item);
   }
 }
 
 export async function adminDeleteMenuItem(id: string): Promise<void> {
-  await supabase.from('products').delete().eq('id', id);
+  await supabase.from('menus').delete().eq('id', id);
 }
 
 export async function getAdminCustomers(limit = 50, offset = 0): Promise<AdminCustomerRow[]> {
