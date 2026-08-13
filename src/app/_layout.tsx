@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/react-native';
 import { Stack, useRouter } from 'expo-router';
 import { PortalHost } from '@rn-primitives/portal';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, View } from 'react-native';
 
 import { SessionProvider, useSession } from '@/ctx';
@@ -43,8 +43,18 @@ function DeepLinkHandler() {
 
 function RootLayoutNav() {
   const { isLoading } = useSession();
+  const [forceReady, setForceReady] = useState(false);
 
-  if (isLoading) {
+  // Safety fallback: if session loading takes longer than 3 seconds on web root, 
+  // force-stop the loading spinner so the app doesn't hang forever.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setForceReady(true);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (isLoading && !forceReady) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a0a02' }}>
         <ActivityIndicator color="#F25C19" size="large" />
