@@ -56,8 +56,7 @@ export default function ForgotPassword() {
     setLoading(true);
     setError('');
 
-    // Route through Edge Function — uses Admin API which bypasses redirectTo allowlist
-    // and gives us full server-side error visibility via logs.
+    // Route through the deployed Supabase Edge Function to bypass allowlist and rate limits
     const { data, error: fnError } = await supabase.functions.invoke('reset-password', {
       body: { email: trimmed },
     });
@@ -65,10 +64,9 @@ export default function ForgotPassword() {
     setLoading(false);
 
     if (fnError) {
-      // Try to extract a meaningful message from the function error
       let msg = 'Something went wrong. Please try again.';
       try {
-        const text = await fnError?.context?.text?.();
+        const text = await (fnError as any)?.context?.text?.();
         const parsed = JSON.parse(text || '{}');
         if (parsed.error) msg = parsed.error;
       } catch { /* keep generic message */ }
