@@ -6,6 +6,7 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
@@ -68,10 +69,26 @@ export default function ResetPassword() {
 
   const strength = getStrength(password);
 
-  // Supabase sets a session via the deep link URL fragment (#access_token=...).
-  // We must confirm there is an active session before allowing password update.
+  // Parse Supabase recovery tokens from URL hash on Web, then verify session
   useEffect(() => {
     (async () => {
+      if (Platform.OS === 'web') {
+        const hash = window.location.hash;
+        if (hash && hash.includes('access_token')) {
+          const params = new URLSearchParams(hash.replace('#', '?'));
+          const accessToken = params.get('access_token');
+          const refreshToken = params.get('refresh_token');
+
+          if (accessToken && refreshToken) {
+            await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }
+      }
+
       const { data } = await supabase.auth.getSession();
       setHasSession(!!data.session);
       setCheckingSession(false);
