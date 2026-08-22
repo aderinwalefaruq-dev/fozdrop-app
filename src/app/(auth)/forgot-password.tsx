@@ -19,7 +19,6 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { supabase } from '@/client/supabase';
 
 const ORANGE = '#F25C19';
 
@@ -56,30 +55,30 @@ export default function ForgotPassword() {
     setLoading(true);
     setError('');
 
-    // Route through the deployed Supabase Edge Function to bypass allowlist and rate limits
-    const { data, error: fnError } = await supabase.functions.invoke('reset-password', {
-      body: { email: trimmed },
-    });
+    try {
+      // Direct fetch call to your deployed MeDo Edge Function
+      const res = await fetch(
+        'https://eblvopsjbbpkjfoxksgy.supabase.co/functions/v1/password-reset',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: trimmed }),
+        }
+      );
 
-    setLoading(false);
+      const data = await res.json();
+      setLoading(false);
 
-    if (fnError) {
-      let msg = 'Something went wrong. Please try again.';
-      try {
-        const text = await (fnError as any)?.context?.text?.();
-        const parsed = JSON.parse(text || '{}');
-        if (parsed.error) msg = parsed.error;
-      } catch { /* keep generic message */ }
-      setError(msg);
-      return;
+      if (!res.ok || data.error) {
+        setError(data.error || 'Something went wrong. Please try again.');
+        return;
+      }
+
+      setSent(true);
+    } catch (err) {
+      setLoading(false);
+      setError('Network error. Please check your connection.');
     }
-
-    if (data?.error) {
-      setError(data.error);
-      return;
-    }
-
-    setSent(true);
   };
 
   return (
