@@ -69,18 +69,30 @@ export default function ResetPassword() {
 
   const strength = getStrength(password);
 
-  // Establish a recovery session from the URL query params or hash fragments
+  // Establish a recovery session from URL query params or tokens
   useEffect(() => {
     (async () => {
       if (Platform.OS === 'web') {
         const searchParams = new URLSearchParams(window.location.search);
+        const token = searchParams.get('token'); // Raw Supabase token format
         const tokenHash = searchParams.get('token_hash');
         const type = searchParams.get('type');
         const code = searchParams.get('code');
         const hash = window.location.hash;
 
-        // 1. Handle token_hash flow (OTP link format)
-        if (tokenHash && type === 'recovery') {
+        // 1. Handle raw token flow (?token=...)
+        if (token) {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token: token,
+            type: 'recovery',
+          });
+          if (verifyError) {
+            console.error('verifyOtp with token failed:', verifyError.message);
+          }
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+        // 2. Handle token_hash flow (OTP link format)
+        else if (tokenHash && type === 'recovery') {
           const { error: verifyError } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
             type: 'recovery',
@@ -90,7 +102,7 @@ export default function ResetPassword() {
           }
           window.history.replaceState(null, '', window.location.pathname);
         } 
-        // 2. Handle PKCE flow (?code= query param)
+        // 3. Handle PKCE flow (?code= query param)
         else if (code) {
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
@@ -98,7 +110,7 @@ export default function ResetPassword() {
           }
           window.history.replaceState(null, '', window.location.pathname);
         }
-        // 3. Handle Implicit flow (hash fragment with access_token)
+        // 4. Handle Implicit flow (hash fragment with access_token)
         else if (hash && hash.includes('access_token')) {
           const params = new URLSearchParams(hash.replace('#', '?'));
           const accessToken = params.get('access_token');
