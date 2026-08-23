@@ -19,6 +19,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { supabase } from '@/client/supabase';
 
 const ORANGE = '#F25C19';
 
@@ -55,30 +56,27 @@ export default function ForgotPassword() {
     setLoading(true);
     setError('');
 
-    try {
-      // Direct fetch call to your deployed MeDo Edge Function
-      const res = await fetch(
-        'https://eblvopsjbbpkjfoxksgy.supabase.co/functions/v1/password-reset',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: trimmed }),
-        }
-      );
+    // Native Supabase Auth flow — replaces the old custom `password-reset`
+    // Edge Function fetch call. Supabase's own /auth/v1/recover endpoint
+    // handles rate limiting, token generation, and the reset email itself.
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
+      redirectTo: 'https://eblvopsjbbpkjfoxksgy.supabase.co/functions/v1/password-reset-redirect',
+    });
 
-      const data = await res.json();
-      setLoading(false);
+    setLoading(false);
 
-      if (!res.ok || data.error) {
-        setError(data.error || 'Something went wrong. Please try again.');
-        return;
-      }
-
-      setSent(true);
-    } catch (err) {
-      setLoading(false);
-      setError('Network error. Please check your connection.');
+    if (resetError) {
+      // Supabase deliberately does NOT distinguish "email not found" from
+      // other failures for most error cases (to avoid account
+      // enumeration), so anything surfaced here is a real problem —
+      // rate limiting, malformed email, etc. — not "this account doesn't
+      // exist." The success-state copy below already reflects that
+      // ambiguity correctly ("If an account exists for...").
+      setError(resetError.message || 'Something went wrong. Please try again.');
+      return;
     }
+
+    setSent(true);
   };
 
   return (
