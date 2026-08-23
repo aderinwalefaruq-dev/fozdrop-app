@@ -69,25 +69,37 @@ export default function ResetPassword() {
 
   const strength = getStrength(password);
 
-  // Establish a recovery session from the URL, then verify it exists.
-  // Supabase can deliver the reset link in one of two formats depending
-  // on your project's Auth settings (Authentication → URL Configuration):
-  //   1. Implicit flow  — tokens in the URL HASH: #access_token=...&refresh_token=...
-  //   2. PKCE flow      — a single-use code in the QUERY STRING: ?code=...
-  // These require different API calls (setSession vs.
-  // exchangeCodeForSession), so this checks for both rather than
-  // assuming one. If setSession/exchangeCodeForSession isn't called with
-  // the right piece, getSession() below will simply return no session
-  // and the user sees "Link Expired" — even though the link may just not
-  // have been parsed correctly, so this is worth testing explicitly
-  // against how your project's password-reset-redirect function actually
-  // forwards the URL.
+  // Establish a recovery session from the URL query params or hash fragments
   useEffect(() => {
     (async () => {
       if (Platform.OS === 'web') {
-        // 1. Implicit flow — hash fragment
+        const searchParams = new URLSearchParams(window.location.search);
+        const tokenHash = searchParams.get('token_hash');
+        const type = searchParams.get('type');
+        const code = searchParams.get('code');
         const hash = window.location.hash;
-        if (hash && hash.includes('access_token')) {
+
+        // 1. Handle token_hash flow (OTP link format)
+        if (tokenHash && type === 'recovery') {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery',
+          });
+          if (verifyError) {
+            console.error('verifyOtp failed:', verifyError.message);
+          }
+          window.history.replaceState(null, '', window.location.pathname);
+        } 
+        // 2. Handle PKCE flow (?code= query param)
+        else if (code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) {
+            console.error('exchangeCodeForSession failed:', exchangeError.message);
+          }
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+        // 3. Handle Implicit flow (hash fragment with access_token)
+        else if (hash && hash.includes('access_token')) {
           const params = new URLSearchParams(hash.replace('#', '?'));
           const accessToken = params.get('access_token');
           const refreshToken = params.get('refresh_token');
@@ -97,17 +109,6 @@ export default function ResetPassword() {
               access_token: accessToken,
               refresh_token: refreshToken,
             });
-            window.history.replaceState(null, '', window.location.pathname);
-          }
-        } else {
-          // 2. PKCE flow — ?code= query param
-          const searchParams = new URLSearchParams(window.location.search);
-          const code = searchParams.get('code');
-          if (code) {
-            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-            if (exchangeError) {
-              console.error('exchangeCodeForSession failed:', exchangeError.message);
-            }
             window.history.replaceState(null, '', window.location.pathname);
           }
         }
@@ -177,7 +178,7 @@ export default function ResetPassword() {
 
   return (
     <KeyboardAvoidingView
-      behavior={process.env.EXPO_OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1, backgroundColor: '#1a0a02' }}
     >
       <StatusBar style="light" />
