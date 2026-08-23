@@ -69,10 +69,23 @@ export default function ResetPassword() {
 
   const strength = getStrength(password);
 
-  // Parse Supabase recovery tokens from URL hash on Web, then verify session
+  // Establish a recovery session from the URL, then verify it exists.
+  // Supabase can deliver the reset link in one of two formats depending
+  // on your project's Auth settings (Authentication → URL Configuration):
+  //   1. Implicit flow  — tokens in the URL HASH: #access_token=...&refresh_token=...
+  //   2. PKCE flow      — a single-use code in the QUERY STRING: ?code=...
+  // These require different API calls (setSession vs.
+  // exchangeCodeForSession), so this checks for both rather than
+  // assuming one. If setSession/exchangeCodeForSession isn't called with
+  // the right piece, getSession() below will simply return no session
+  // and the user sees "Link Expired" — even though the link may just not
+  // have been parsed correctly, so this is worth testing explicitly
+  // against how your project's password-reset-redirect function actually
+  // forwards the URL.
   useEffect(() => {
     (async () => {
       if (Platform.OS === 'web') {
+        // 1. Implicit flow — hash fragment
         const hash = window.location.hash;
         if (hash && hash.includes('access_token')) {
           const params = new URLSearchParams(hash.replace('#', '?'));
@@ -84,6 +97,17 @@ export default function ResetPassword() {
               access_token: accessToken,
               refresh_token: refreshToken,
             });
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        } else {
+          // 2. PKCE flow — ?code= query param
+          const searchParams = new URLSearchParams(window.location.search);
+          const code = searchParams.get('code');
+          if (code) {
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+            if (exchangeError) {
+              console.error('exchangeCodeForSession failed:', exchangeError.message);
+            }
             window.history.replaceState(null, '', window.location.pathname);
           }
         }
