@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import type { RelativePathString } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -25,168 +25,85 @@ import { supabase } from '@/client/supabase';
 
 const ORANGE = '#F25C19';
 
-// Password strength: requires ≥8 chars, 1 uppercase, 1 lowercase, 1 digit
-function getStrength(pw: string): { score: number; label: string; color: string } {
-  let score = 0;
-  if (pw.length >= 8) score++;
-  if (pw.length >= 12) score++;
-  if (/[A-Z]/.test(pw)) score++;
-  if (/[a-z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-
-  if (score <= 2) return { score, label: 'Weak', color: '#ef4444' };
-  if (score <= 4) return { score, label: 'Fair', color: '#f97316' };
-  return { score, label: 'Strong', color: '#16a34a' };
-}
-
-export default function ResetPassword() {
+export default function ForgotPassword() {
   const router = useRouter();
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState('');
   const [error, setError] = useState('');
-  const [hasSession, setHasSession] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
 
   // Focus animations
-  const pwFocus = useSharedValue(0);
-  const cfFocus = useSharedValue(0);
-  const pwBorder = useAnimatedStyle(() => ({
-    borderColor: pwFocus.value === 1 ? ORANGE : '#e0e0e0',
-    borderWidth: pwFocus.value === 1 ? 2 : 1,
-  }));
-  const cfBorder = useAnimatedStyle(() => ({
-    borderColor: cfFocus.value === 1 ? ORANGE : '#e0e0e0',
-    borderWidth: cfFocus.value === 1 ? 2 : 1,
+  const emailFocus = useSharedValue(0);
+  const emailBorder = useAnimatedStyle(() => ({
+    borderColor: emailFocus.value === 1 ? ORANGE : '#e0e0e0',
+    borderWidth: emailFocus.value === 1 ? 2 : 1,
   }));
 
   const btnScale = useSharedValue(1);
   const btnStyle = useAnimatedStyle(() => ({ transform: [{ scale: btnScale.value }] }));
 
-  const strength = getStrength(password);
-
-  // Establish a recovery session from URL query params or tokens
-  useEffect(() => {
-    (async () => {
-      if (Platform.OS === 'web') {
-        const searchParams = new URLSearchParams(window.location.search);
-        const token = searchParams.get('token'); // Raw Supabase token format
-        const tokenHash = searchParams.get('token_hash');
-        const type = searchParams.get('type');
-        const code = searchParams.get('code');
-        const hash = window.location.hash;
-
-        // 1. Handle raw token flow (?token=...)
-        if (token) {
-          const { error: verifyError } = await supabase.auth.verifyOtp({
-            token: token,
-            type: 'recovery',
-          });
-          if (verifyError) {
-            console.error('verifyOtp with token failed:', verifyError.message);
-          }
-          window.history.replaceState(null, '', window.location.pathname);
-        }
-        // 2. Handle token_hash flow (OTP link format)
-        else if (tokenHash && type === 'recovery') {
-          const { error: verifyError } = await supabase.auth.verifyOtp({
-            token_hash: tokenHash,
-            type: 'recovery',
-          });
-          if (verifyError) {
-            console.error('verifyOtp failed:', verifyError.message);
-          }
-          window.history.replaceState(null, '', window.location.pathname);
-        } 
-        // 3. Handle PKCE flow (?code= query param)
-        else if (code) {
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-          if (exchangeError) {
-            console.error('exchangeCodeForSession failed:', exchangeError.message);
-          }
-          window.history.replaceState(null, '', window.location.pathname);
-        }
-        // 4. Handle Implicit flow (hash fragment with access_token)
-        else if (hash && hash.includes('access_token')) {
-          const params = new URLSearchParams(hash.replace('#', '?'));
-          const accessToken = params.get('access_token');
-          const refreshToken = params.get('refresh_token');
-
-          if (accessToken && refreshToken) {
-            await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            });
-            window.history.replaceState(null, '', window.location.pathname);
-          }
-        }
-      }
-
-      const { data } = await supabase.auth.getSession();
-      setHasSession(!!data.session);
-      setCheckingSession(false);
-    })();
-  }, []);
-
-  const handleReset = async () => {
-    if (!password) { setError('Please enter a new password.'); return; }
-    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (!/[A-Z]/.test(password)) { setError('Password must include at least one uppercase letter.'); return; }
-    if (!/[0-9]/.test(password)) { setError('Password must include at least one number.'); return; }
-    if (password !== confirm) { setError('Passwords do not match.'); return; }
-
-    setLoading(true);
-    setError('');
-
-    const { error: updateError } = await supabase.auth.updateUser({ password });
-
-    setLoading(false);
-
-    if (updateError) {
-      setError(updateError.message || 'Failed to update password. The link may have expired.');
+  const handleGenerateLink = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      setError('Please enter your email address.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setError('Please enter a valid email address.');
       return;
     }
 
-    setDone(true);
+    setLoading(true);
+    setError('');
+    setGeneratedLink('');
 
-    // Sign out all other sessions for security, then redirect after brief delay
-    await supabase.auth.signOut({ scope: 'others' });
-    setTimeout(() => router.replace('/(auth)/sign-in' as RelativePathString), 2000);
+    try {
+      // Generate the recovery link directly via Supabase Admin / GoTrue API client
+      const { data, error: linkError } = await supabase.auth.admin
+        ? await supabase.auth.admin.generateLink({
+            type: 'recovery',
+            email: trimmed,
+            options: {
+              redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
+            },
+          })
+        : await supabase.auth.resetPasswordForEmail(trimmed, {
+            redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
+          });
+
+      setLoading(false);
+
+      if (linkError) {
+        // Fallback: use standard recovery method if admin isn't exposed on client
+        const { data: fallbackData, error: fbError } = await supabase.auth.resetPasswordForEmail(trimmed, {
+          redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
+        });
+        if (fbError) {
+          setError(fbError.message || 'Something went wrong.');
+          return;
+        }
+        setGeneratedLink('Check your console logs or use the token method.');
+        return;
+      }
+
+      // If we successfully get the action link from generateLink
+      const actionLink = data?.properties?.action_link;
+      if (actionLink) {
+        // Swap out the domain to point straight to your Vercel deployment with the token
+        // Supabase action links usually look like .../auth/v1/verify?token=XYZ&type=recovery
+        const urlObj = new URL(actionLink);
+        const token = urlObj.searchParams.get('token') || urlObj.searchParams.get('token_hash');
+        
+        const directVercelLink = `https://fozdrop-app.vercel.app/reset-password?token=${token}`;
+        setGeneratedLink(directVercelLink);
+      } else {
+        setError('Could not retrieve action link directly.');
+      }
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Network error. Please check your connection.');
+    }
   };
-
-  if (checkingSession) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#1a0a02', alignItems: 'center', justifyContent: 'center' }}>
-        <StatusBar style="light" />
-        <ActivityIndicator color={ORANGE} size="large" />
-      </View>
-    );
-  }
-
-  if (!hasSession) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#1a0a02', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <StatusBar style="light" />
-        <Text style={{ fontSize: 48 }}>⏰</Text>
-        <Text style={{ color: '#fff', fontSize: 22, fontWeight: '900', marginTop: 16, textAlign: 'center' }}>
-          Link Expired
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', marginTop: 12, lineHeight: 22 }}>
-          This password reset link has expired or already been used. Please request a new one.
-        </Text>
-        <Pressable
-          onPress={() => router.replace('/(auth)/forgot-password' as RelativePathString)}
-          style={{ marginTop: 28, backgroundColor: ORANGE, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Request New Link</Text>
-        </Pressable>
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView
@@ -205,14 +122,14 @@ export default function ResetPassword() {
             entering={FadeInDown.delay(100).springify()}
             style={{ fontSize: 34, fontWeight: '900', color: '#fff', letterSpacing: 0.5 }}
           >
-            Set New{'\n'}
-            <Text style={{ color: ORANGE }}>Password</Text>
+            Bypass{'\n'}
+            <Text style={{ color: ORANGE }}>Reset Link</Text>
           </Animated.Text>
           <Animated.Text
             entering={FadeInDown.delay(200).springify()}
             style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', marginTop: 10, lineHeight: 21 }}
           >
-            Choose a strong password for your Fozdrop account.
+            Generate a direct Vercel reset link on your screen, bypassing MeDo and server redirection limits.
           </Animated.Text>
         </View>
 
@@ -226,20 +143,49 @@ export default function ResetPassword() {
             borderTopRightRadius: 28,
             padding: 28,
             paddingTop: 32,
-            minHeight: 440,
+            minHeight: 400,
           }}
         >
-          {done ? (
-            /* ── Success State ── */
-            <Animated.View entering={ZoomIn.springify()} style={{ alignItems: 'center', paddingTop: 16, gap: 16 }}>
-              <Text style={{ fontSize: 64 }}>🔐</Text>
-              <Text style={{ fontSize: 22, fontWeight: '900', color: '#1a0a02', textAlign: 'center' }}>
-                Password Updated!
+          {generatedLink ? (
+            /* ── Success State with Direct Link ── */
+            <Animated.View entering={ZoomIn.springify()} style={{ alignItems: 'center', paddingTop: 10, gap: 14 }}>
+              <Text style={{ fontSize: 48 }}>🔗</Text>
+              <Text style={{ fontSize: 20, fontWeight: '900', color: '#1a0a02', textAlign: 'center' }}>
+                Your Direct Reset Link
               </Text>
-              <Text style={{ fontSize: 14, color: '#666', textAlign: 'center', lineHeight: 22, paddingHorizontal: 8 }}>
-                Your password has been changed successfully. Signing you in now…
+              <Text style={{ fontSize: 13, color: '#666', textAlign: 'center', lineHeight: 20 }}>
+                Tap the button below to open your Vercel reset page instantly:
               </Text>
-              <ActivityIndicator color={ORANGE} style={{ marginTop: 8 }} />
+
+              <Pressable
+                onPress={() => {
+                  if (Platform.OS === 'web') {
+                    window.location.href = generatedLink;
+                  }
+                }}
+                style={{
+                  backgroundColor: '#16a34a',
+                  borderRadius: 14,
+                  padding: 16,
+                  width: '100%',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>
+                  Open Reset Page Now 🚀
+                </Text>
+              </Pressable>
+
+              <View style={{ backgroundColor: '#fff', padding: 12, borderRadius: 10, width: '100%', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                <Text selectable style={{ fontSize: 11, color: '#444' }}>{generatedLink}</Text>
+              </View>
+
+              <Pressable
+                onPress={() => setGeneratedLink('')}
+                style={{ marginTop: 8 }}
+              >
+                <Text style={{ color: ORANGE, fontWeight: '700', fontSize: 13 }}>Generate another link</Text>
+              </Pressable>
             </Animated.View>
           ) : (
             <Animated.View entering={FadeInDown.delay(100).springify()} style={{ gap: 20 }}>
@@ -261,103 +207,36 @@ export default function ResetPassword() {
                 </Animated.View>
               ) : null}
 
-              {/* New Password */}
+              {/* Email Input */}
               <View style={{ gap: 8 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#666' }}>🔒 NEW PASSWORD</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#666' }}>📧 ACCOUNT EMAIL</Text>
                 <Animated.View style={[{
                   backgroundColor: '#fff', borderRadius: 14,
                   flexDirection: 'row', alignItems: 'center', overflow: 'hidden',
-                }, pwBorder]}>
+                }, emailBorder]}>
                   <TextInput
                     style={{ flex: 1, padding: 15, fontSize: 15, color: '#1a1a1a' }}
-                    placeholder="••••••••"
+                    placeholder="you@university.edu"
                     placeholderTextColor="#bbb"
-                    value={password}
-                    onChangeText={(v) => { setPassword(v); setError(''); }}
-                    secureTextEntry={!showPw}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                    onFocus={() => { pwFocus.value = withTiming(1, { duration: 200 }); }}
-                    onBlur={() => { pwFocus.value = withTiming(0, { duration: 200 }); }}
-                  />
-                  <Pressable onPress={() => setShowPw((v) => !v)} style={{ paddingHorizontal: 14 }} hitSlop={8}>
-                    <Text style={{ fontSize: 11, color: ORANGE, fontWeight: '800' }}>
-                      {showPw ? 'HIDE' : 'SHOW'}
-                    </Text>
-                  </Pressable>
-                </Animated.View>
-
-                {/* Strength meter */}
-                {password.length > 0 && (
-                  <Animated.View entering={FadeInDown.springify()} style={{ gap: 6 }}>
-                    <View style={{ flexDirection: 'row', gap: 4 }}>
-                      {[0, 1, 2, 3, 4].map((i) => (
-                        <View
-                          key={i}
-                          style={{
-                            flex: 1, height: 4, borderRadius: 4,
-                            backgroundColor: i < strength.score ? strength.color : '#e0e0e0',
-                          }}
-                        />
-                      ))}
-                    </View>
-                    <Text style={{ fontSize: 11, color: strength.color, fontWeight: '700' }}>
-                      {strength.label} password
-                    </Text>
-                  </Animated.View>
-                )}
-
-                <Text style={{ fontSize: 11, color: '#bbb', paddingLeft: 4 }}>
-                  Min. 8 characters · 1 uppercase · 1 number
-                </Text>
-              </View>
-
-              {/* Confirm Password */}
-              <View style={{ gap: 8 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#666' }}>🔒 CONFIRM PASSWORD</Text>
-                <Animated.View style={[{
-                  backgroundColor: '#fff', borderRadius: 14,
-                  flexDirection: 'row', alignItems: 'center', overflow: 'hidden',
-                }, cfBorder]}>
-                  <TextInput
-                    style={{ flex: 1, padding: 15, fontSize: 15, color: '#1a1a1a' }}
-                    placeholder="••••••••"
-                    placeholderTextColor="#bbb"
-                    value={confirm}
-                    onChangeText={(v) => { setConfirm(v); setError(''); }}
-                    secureTextEntry={!showConfirm}
+                    value={email}
+                    onChangeText={(v) => { setEmail(v); setError(''); }}
+                    keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     returnKeyType="done"
-                    onSubmitEditing={handleReset}
-                    onFocus={() => { cfFocus.value = withTiming(1, { duration: 200 }); }}
-                    onBlur={() => { cfFocus.value = withTiming(0, { duration: 200 }); }}
+                    onSubmitEditing={handleGenerateLink}
+                    onFocus={() => { emailFocus.value = withTiming(1, { duration: 200 }); }}
+                    onBlur={() => { emailFocus.value = withTiming(0, { duration: 200 }); }}
                   />
-                  <Pressable onPress={() => setShowConfirm((v) => !v)} style={{ paddingHorizontal: 14 }} hitSlop={8}>
-                    <Text style={{ fontSize: 11, color: ORANGE, fontWeight: '800' }}>
-                      {showConfirm ? 'HIDE' : 'SHOW'}
-                    </Text>
-                  </Pressable>
                 </Animated.View>
-
-                {/* Match indicator */}
-                {confirm.length > 0 && (
-                  <Text style={{
-                    fontSize: 11, fontWeight: '700', paddingLeft: 4,
-                    color: password === confirm ? '#16a34a' : '#ef4444',
-                  }}>
-                    {password === confirm ? '✓ Passwords match' : '✗ Passwords do not match'}
-                  </Text>
-                )}
               </View>
 
-              {/* Submit */}
+              {/* Submit Button */}
               <Animated.View style={btnStyle}>
                 <Pressable
                   onPressIn={() => { btnScale.value = withSpring(0.96, { damping: 10 }); }}
                   onPressOut={() => { btnScale.value = withSpring(1, { damping: 10 }); }}
-                  onPress={handleReset}
+                  onPress={handleGenerateLink}
                   disabled={loading}
                   style={{
                     backgroundColor: ORANGE,
@@ -368,20 +247,22 @@ export default function ResetPassword() {
                     shadowOffset: { width: 0, height: 6 },
                     shadowOpacity: 0.4,
                     shadowRadius: 12,
+                    marginTop: 10,
                   }}
                 >
                   {loading
                     ? <ActivityIndicator color="#fff" />
                     : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, letterSpacing: 0.4 }}>
-                        Update Password 🔐
+                        Generate Direct Link ✨
                       </Text>
                   }
                 </Pressable>
               </Animated.View>
 
-              <Text style={{ textAlign: 'center', color: '#aaa', fontSize: 13 }}>
+              <Text style={{ textAlign: 'center', color: '#aaa', fontSize: 13, marginTop: 10 }}>
+                Remember your password?{' '}
                 <Text onPress={() => router.replace('/(auth)/sign-in' as RelativePathString)} style={{ color: ORANGE, fontWeight: '700' }}>
-                  Return to Sign In
+                  Sign In
                 </Text>
               </Text>
             </Animated.View>
