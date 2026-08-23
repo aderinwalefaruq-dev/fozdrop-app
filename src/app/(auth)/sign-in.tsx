@@ -182,7 +182,6 @@ function RoleCard({ role, selected, onSelect }: {
   );
 }
 
-// Validates a referral code against the DB and returns the referrer's name or null
 async function verifyReferralCode(code: string): Promise<{ valid: boolean; referrerName?: string }> {
   if (!code || code.length !== 6) return { valid: false };
   const { data } = await supabase
@@ -267,7 +266,6 @@ function ReferralCodeInput({
         {rightEl}
       </Animated.View>
 
-      {/* Status feedback */}
       {status === 'valid' && referrerName ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#f0fdf4', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#bbf7d0' }}>
           <Text style={{ fontSize: 13 }}>👋</Text>
@@ -369,6 +367,25 @@ function AnimatedButton({ onPress, loading, label, delay = 0 }: {
 
 export default function SignIn() {
   const router = useRouter();
+
+  // ── Recovery Token Sniffer Interceptor ──
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const hash = window.location.hash;
+      const search = window.location.search;
+
+      if (
+        hash.includes('recovery') || 
+        hash.includes('access_token') || 
+        search.includes('token') || 
+        search.includes('code')
+      ) {
+        const targetUrl = `https://fozdrop-app.vercel.app/reset-password${search}${hash}`;
+        window.location.replace(targetUrl);
+      }
+    }
+  }, []);
+
   const { height } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('login');
   const [loading, setLoading] = useState(false);
@@ -388,13 +405,11 @@ export default function SignIn() {
   const [referralCode, setReferralCode] = useState('');
   const [referralValid, setReferralValid] = useState(false);
 
-  // Tab indicator animation
   const tabX = useSharedValue(0);
   const tabIndicatorStyle = useAnimatedStyle(() => ({
     left: interpolate(tabX.value, [0, 1], [5, 148]),
   }));
 
-  // Logo pulse animation
   const logoPulse = useSharedValue(1);
   useEffect(() => {
     logoPulse.value = withRepeat(
@@ -418,9 +433,6 @@ export default function SignIn() {
       ? '/(super-admin)' as RelativePathString
       : '/(app)/(tabs)/home' as RelativePathString;
     router.replace(dest);
-    // iOS / Safari fallback: if expo-router's replace() hangs (unresolved
-    // promise, WebKit navigation quirk), window.location forces a clean
-    // hard-navigate after 800ms so the user is never left on a blank screen.
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       setTimeout(() => {
         if (window.location.pathname.includes('sign-in')) {
@@ -429,9 +441,6 @@ export default function SignIn() {
       }, 800);
     }
   };
-
-  // Keep the old navigateHome for the register path (new users are never Admin)
-  const navigateHome = () => navigateByRole(null);
 
   const handleLogin = async () => {
     if (!loginEmail || !loginPassword) { setError('Please fill in all fields'); return; }
@@ -445,8 +454,6 @@ export default function SignIn() {
       setError(authError.message);
       return;
     }
-    // Fetch profile to determine role — Admin users go to the super-admin portal,
-    // all other roles land on the unified home screen.
     let role: string | null = null;
     if (authData.user) {
       const { data: profile } = await supabase
@@ -464,7 +471,6 @@ export default function SignIn() {
     if (!regName || !regEmail || !regPassword) { setError('Please fill in all required fields'); return; }
     if (!agreed) { setError('Please accept the User Agreement & Privacy Policy'); return; }
     if (regPassword.length < 6) { setError('Password must be at least 6 characters'); return; }
-    // Warn if they typed a code but it wasn't verified valid
     if (referralCode.length > 0 && referralCode.length < 6) {
       setError('Referral code must be 6 characters'); return;
     }
@@ -478,8 +484,6 @@ export default function SignIn() {
 
     if (fnError) {
       setLoading(false);
-      // FunctionsHttpError: edge function returned a non-2xx — extract JSON body
-      // FunctionsRelayError: network/relay failure — context may be undefined
       try {
         const raw = await fnError?.context?.text?.();
         const parsed = JSON.parse(raw || '{}');
@@ -492,11 +496,9 @@ export default function SignIn() {
 
     if (data?.session) {
       await supabase.auth.setSession(data.session);
-      // Link referrer — best-effort, non-blocking
       if (referralCode.length === 6 && referralValid && data.session.user?.id) {
         saveReferredBy(data.session.user.id, referralCode).catch(() => null);
       }
-      // Fetch role so new Admin registrations also land on the correct portal
       let role: string | null = null;
       if (data.session.user?.id) {
         const { data: profile } = await supabase
@@ -512,8 +514,6 @@ export default function SignIn() {
     }
 
     if (data?.manualLogin) {
-      // Account was created successfully but auto-login failed (rare edge case).
-      // Switch to the login tab so the user can sign in with their new credentials.
       setLoading(false);
       setLoginEmail(regEmail.trim().toLowerCase());
       setLoginPassword(regPassword);
@@ -533,19 +533,15 @@ export default function SignIn() {
       <StatusBar style="light" />
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
-        {/* ── Hero Section ── */}
         <View style={{ height: heroH, backgroundColor: '#1a0a02', overflow: 'hidden', position: 'relative' }}>
-          {/* Background gradient circles */}
           <View style={{ position: 'absolute', top: -60, right: -60, width: 220, height: 220, borderRadius: 110, backgroundColor: ORANGE, opacity: 0.18 }} />
           <View style={{ position: 'absolute', top: 20, left: -80, width: 180, height: 180, borderRadius: 90, backgroundColor: ORANGE_LIGHT, opacity: 0.12 }} />
           <View style={{ position: 'absolute', bottom: -40, right: 40, width: 140, height: 140, borderRadius: 70, backgroundColor: ORANGE_DARK, opacity: 0.22 }} />
 
-          {/* Floating particles */}
           {PARTICLES.map((p) => (
             <FloatingParticle key={p.emoji} emoji={p.emoji} xFraction={p.x} delay={p.delay} height={heroH} />
           ))}
 
-          {/* Brand text */}
           <View style={{ position: 'absolute', bottom: 28, left: 28, zIndex: 10 }}>
             <Animated.View entering={FadeInDown.delay(100).springify()} style={logoStyle}>
               <Text style={{ fontSize: 46, fontWeight: '900', color: '#fff', letterSpacing: 1.5 }}>
@@ -558,7 +554,6 @@ export default function SignIn() {
           </View>
         </View>
 
-        {/* ── Card Section ── */}
         <Animated.View
           entering={FadeInUp.delay(200).springify()}
           style={{
@@ -572,12 +567,10 @@ export default function SignIn() {
             minHeight: height * 0.72,
           }}
         >
-          {/* Tab Toggle */}
           <Animated.View entering={ZoomIn.delay(300).springify()} style={{
             flexDirection: 'row', backgroundColor: '#f0ebe3', borderRadius: 16,
             padding: 5, marginBottom: 28, position: 'relative',
           }}>
-            {/* Sliding indicator */}
             <Animated.View style={[{
               position: 'absolute', top: 5, bottom: 5,
               width: '50%', borderRadius: 12, backgroundColor: ORANGE,
@@ -593,7 +586,6 @@ export default function SignIn() {
             ))}
           </Animated.View>
 
-          {/* Error */}
           {error ? (
             <Animated.View entering={ZoomIn.springify()} style={{
               backgroundColor: '#fee2e2', padding: 13, borderRadius: 12,
@@ -605,7 +597,6 @@ export default function SignIn() {
             </Animated.View>
           ) : null}
 
-          {/* ── Login Form ── */}
           {tab === 'login' ? (
             <Animated.View entering={SlideInRight.springify()} style={{ gap: 16 }}>
               <AnimatedInput label="📧 Email Address" placeholder="you@university.edu"
@@ -625,7 +616,6 @@ export default function SignIn() {
                 }
               />
 
-              {/* Forgot Password link — between password field and Sign In button */}
               <Animated.View entering={FadeInDown.delay(250).springify()} style={{ alignItems: 'flex-end', marginTop: -8 }}>
                 <Pressable onPress={() => router.push('/(auth)/forgot-password')} hitSlop={10}>
                   <Text style={{ fontSize: 13, color: ORANGE, fontWeight: '700' }}>
@@ -644,7 +634,6 @@ export default function SignIn() {
               </Animated.Text>
             </Animated.View>
           ) : (
-            /* ── Register Form ── */
             <Animated.View entering={SlideInLeft.springify()} style={{ gap: 16 }}>
               <AnimatedInput label="👤 Full Name *" placeholder="Your full name"
                 value={regName} onChangeText={setRegName} delay={100} />
@@ -670,7 +659,6 @@ export default function SignIn() {
                 }
               />
 
-              {/* Role Selector */}
               <Animated.View entering={FadeInDown.delay(300).springify()}>
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#666', marginBottom: 10 }}>👥 I am a...</Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -685,7 +673,6 @@ export default function SignIn() {
                 </View>
               </Animated.View>
 
-              {/* Referral code — Customers only */}
               {selectedRole === 'Customer' && (
                 <ReferralCodeInput
                   value={referralCode}
@@ -694,7 +681,6 @@ export default function SignIn() {
                 />
               )}
 
-              {/* Agreement */}
               <Animated.View entering={FadeInDown.delay(350).springify()}>
                 <AgreementCheckbox agreed={agreed} onToggle={() => setAgreed((v) => !v)} />
               </Animated.View>
