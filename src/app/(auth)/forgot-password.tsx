@@ -56,22 +56,14 @@ export default function ForgotPassword() {
     setLoading(true);
     setError('');
 
-    // Native Supabase Auth flow — replaces the old custom `password-reset`
-    // Edge Function fetch call. Supabase's own /auth/v1/recover endpoint
-    // handles rate limiting, token generation, and the reset email itself.
+    // Native Supabase Auth flow updated with Vercel redirect target
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
-      redirectTo: 'https://eblvopsjbbpkjfoxksgy.supabase.co/functions/v1/password-reset-redirect',
+      redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
     });
 
     setLoading(false);
 
     if (resetError) {
-      // Supabase deliberately does NOT distinguish "email not found" from
-      // other failures for most error cases (to avoid account
-      // enumeration), so anything surfaced here is a real problem —
-      // rate limiting, malformed email, etc. — not "this account doesn't
-      // exist." The success-state copy below already reflects that
-      // ambiguity correctly ("If an account exists for...").
       setError(resetError.message || 'Something went wrong. Please try again.');
       return;
     }
