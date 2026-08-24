@@ -56,15 +56,15 @@ export default function ForgotPassword() {
     setLoading(true);
     setError('');
 
-    // Native Supabase Auth flow updated with Vercel redirect target
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
-      redirectTo: 'https://fozdrop-app.vercel.app/reset-password',
+    // Invoke our custom password-reset Edge Function (powered by Resend)
+    const { error: fnError } = await supabase.functions.invoke('password-reset', {
+      body: { email: trimmed },
     });
 
     setLoading(false);
 
-    if (resetError) {
-      setError(resetError.message || 'Something went wrong. Please try again.');
+    if (fnError) {
+      setError('Something went wrong. Please try again.');
       return;
     }
 
