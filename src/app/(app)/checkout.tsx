@@ -10,6 +10,7 @@ import { getWallet, getDropoffLocations, placeOrder, getAppIsOpen, getDeliveryFe
 import { useCart } from '@/context/CartContext';
 import type { Wallet, CampusDropoffLocation } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
+import { getUpcomingTimeSlots, formatSlotTime } from '@/lib/utils/schedule';
 
 const ORANGE = '#F25C19';
 const CREAM = '#FAF6F0';
@@ -35,6 +36,8 @@ export default function CheckoutScreen() {
   const [packVendors, setPackVendors] = useState<Record<string, boolean>>({});
   const [deliveryFee, setDeliveryFee] = useState(199);
   const [packagingFeeUnit, setPackagingFeeUnit] = useState(200);
+  const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   const packagingFee = vendors.filter((v) => packVendors[v.id]).length * packagingFeeUnit;
   const totalPrice = subtotal + deliveryFee + packagingFee;
@@ -81,6 +84,7 @@ export default function CheckoutScreen() {
           itemName: c.menu_item.item_name,
           price: c.menu_item.price,
           quantity: c.quantity,
+          plateNotes: c.plateNotes,
         })),
       };
     });
@@ -92,6 +96,7 @@ export default function CheckoutScreen() {
       locationDescription,
       deliveryNotes,
       subtotal,
+      scheduledFor: scheduledFor ? scheduledFor.toISOString() : null,
     });
 
     setPlacing(false);
@@ -156,6 +161,25 @@ export default function CheckoutScreen() {
             </Text>
           </View>
         )}
+
+        {/* Delivery Time */}
+        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 10 }}>⏰ Delivery Time</Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable onPress={() => setScheduledFor(null)}
+              style={{ flex: 1, borderWidth: 1.5, borderColor: !scheduledFor ? ORANGE : '#ddd', backgroundColor: !scheduledFor ? '#fff7ed' : '#fff',
+                borderRadius: 10, padding: 12, alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: !scheduledFor ? ORANGE : '#555' }}>🚀 ASAP</Text>
+            </Pressable>
+            <Pressable onPress={() => setShowTimePicker(true)}
+              style={{ flex: 1, borderWidth: 1.5, borderColor: scheduledFor ? ORANGE : '#ddd', backgroundColor: scheduledFor ? '#fff7ed' : '#fff',
+                borderRadius: 10, padding: 12, alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: scheduledFor ? ORANGE : '#555' }}>
+                {scheduledFor ? `📅 ${formatSlotTime(scheduledFor)}` : '📅 Schedule'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
 
         {/* Per-vendor order sections */}
         {vendors.map((v, idx) => {
@@ -362,6 +386,27 @@ export default function CheckoutScreen() {
                 <Text style={{ fontSize: 14, color: '#1a1a1a', fontWeight: selectedLocation?.id === loc.id ? '700' : '400' }}>
                   {loc.location_name}
                 </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Delivery Time Picker Modal */}
+      <Modal visible={showTimePicker} transparent animationType="slide" onRequestClose={() => setShowTimePicker(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setShowTimePicker(false)} />
+        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '60%' }}>
+          <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' }}>
+            <View style={{ width: 40, height: 4, backgroundColor: '#e5e5e5', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+            <Text style={{ fontSize: 17, fontWeight: '800', color: '#1a1a1a' }}>Choose a delivery time</Text>
+          </View>
+          <ScrollView>
+            {getUpcomingTimeSlots().map((slot) => (
+              <Pressable key={slot.toISOString()}
+                onPress={() => { setScheduledFor(slot); setShowTimePicker(false); }}
+                style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#f5f5f5', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: scheduledFor?.getTime() === slot.getTime() ? ORANGE : '#ddd' }} />
+                <Text style={{ fontSize: 14, color: '#1a1a1a' }}>{formatSlotTime(slot)}</Text>
               </Pressable>
             ))}
           </ScrollView>
