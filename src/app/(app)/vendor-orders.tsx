@@ -207,6 +207,15 @@ function VendorOrderCard({
         </View>
       </View>
 
+      {order.scheduled_for ? (
+        <View style={{ marginHorizontal: 14, marginBottom: 8, backgroundColor: '#ede9fe', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}>
+          <Text style={{ fontSize: 11 }}>📅</Text>
+          <Text style={{ fontSize: 11, fontWeight: '800', color: '#6d28d9' }}>
+            Scheduled for {new Date(order.scheduled_for).toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' })}
+          </Text>
+        </View>
+      ) : null}
+
       {/* Customer + Dropoff */}
       <View style={{ paddingHorizontal: 14, paddingBottom: 10, gap: 4 }}>
         <Text style={{ fontSize: 13, color: '#555' }}>
@@ -223,11 +232,20 @@ function VendorOrderCard({
       {/* Order Items */}
       <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
         {(order.order_items || []).map((item) => (
-          <View key={item.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
-            <Text style={{ fontSize: 13, color: '#333', flex: 1 }} numberOfLines={1}>
-              {item.quantity}× {item.item_name}
-            </Text>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#555' }}>{formatNaira(item.price * item.quantity)}</Text>
+          <View key={item.id} style={{ paddingVertical: 3 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 13, color: '#333', flex: 1 }} numberOfLines={1}>
+                {item.quantity}× {item.item_name}
+              </Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#555' }}>{formatNaira(item.price * item.quantity)}</Text>
+            </View>
+            {(item.plate_notes || []).some((n) => n?.trim()) && (
+              <View style={{ marginTop: 2, marginLeft: 8 }}>
+                {item.plate_notes.map((note, idx) => (note?.trim() ? (
+                  <Text key={idx} style={{ fontSize: 11, color: '#888' }}>Plate {idx + 1}: {note}</Text>
+                ) : null))}
+              </View>
+            )}
           </View>
         ))}
       </View>
@@ -274,5 +292,3 @@ function VendorOrderCard({
     </View>
   );
 }
-
-
