@@ -8,6 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSession } from '@/ctx';
 import { getVendorById, getMenuByVendor, getActiveMenuByVendor, toggleMenuItemActive, getSectionsByVendor } from '@/db/api';
 import { useCart } from '@/context/CartContext';
+import { PlateCustomizeModal } from '@/components/PlateCustomizeModal';
 import type { Vendor, MenuItem, MenuSection } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
 
@@ -18,19 +19,20 @@ export default function VendorStoreView() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { session } = useSession();
-  const { addItem, items: cartItems, totalItems } = useCart();
+  const { addItem, updatePlateNote, items: cartItems, totalItems } = useCart();
 
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [sections, setSections] = useState<MenuSection[]>([]);
   const [activeSection, setActiveSection] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [customizeItem, setCustomizeItem] = useState<MenuItem | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!id) { setLoading(false); return; }
+    if (!id || !session?.user?.id) { setLoading(false); return; }
     const v = await getVendorById(id);
     setVendor(v);
-    const isOwner = session?.user?.id ? v?.owner_id === session.user.id : false;
+    const isOwner = v?.owner_id === session.user.id;
     const [menu, secs] = await Promise.all([
       isOwner ? getMenuByVendor(id) : getActiveMenuByVendor(id),
       getSectionsByVendor(id),
@@ -152,6 +154,7 @@ export default function VendorStoreView() {
             cartQty={cartItems.find((c) => c.menu_item.id === item.id)?.quantity || 0}
             onAdd={() => handleAddToCart(item)}
             onToggleActive={() => handleToggleActive(item)}
+            onCustomize={() => setCustomizeItem(item)}
           />
         )}
         ListFooterComponent={
@@ -170,6 +173,14 @@ export default function VendorStoreView() {
           ) : null
         }
       />
+
+      <PlateCustomizeModal
+        visible={!!customizeItem}
+        item={customizeItem}
+        plateNotes={cartItems.find((c) => c.menu_item.id === customizeItem?.id)?.plateNotes ?? []}
+        onChangeNote={(idx, note) => customizeItem && updatePlateNote(customizeItem.id, idx, note)}
+        onClose={() => setCustomizeItem(null)}
+      />
     </View>
   );
 }
@@ -185,13 +196,14 @@ function SectionTab({ label, active, onPress }: { label: string; active: boolean
 }
 
 function MenuItemRow({
-  item, isVendorOwner, cartQty, onAdd, onToggleActive,
+  item, isVendorOwner, cartQty, onAdd, onToggleActive, onCustomize,
 }: {
   item: MenuItem;
   isVendorOwner: boolean;
   cartQty: number;
   onAdd: () => void;
   onToggleActive: () => void;
+  onCustomize: () => void;
 }) {
   return (
     <View style={{ marginHorizontal: 16, marginBottom: 7, backgroundColor: '#fff', borderRadius: 12,
@@ -221,13 +233,20 @@ function MenuItemRow({
             </Pressable>
           ) : (
             item.is_active ? (
-              <Pressable onPress={onAdd}
-                style={{ backgroundColor: cartQty > 0 ? ORANGE : '#fff5f0', width: 28, height: 28, borderRadius: 14,
-                  alignItems: 'center', justifyContent: 'center', borderWidth: cartQty > 0 ? 0 : 1, borderColor: ORANGE }}>
-                <Text style={{ fontSize: cartQty > 0 ? 12 : 17, fontWeight: '900', color: cartQty > 0 ? '#fff' : ORANGE }}>
-                  {cartQty > 0 ? cartQty : '+'}
-                </Text>
-              </Pressable>
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <Pressable onPress={onAdd}
+                  style={{ backgroundColor: cartQty > 0 ? ORANGE : '#fff5f0', width: 28, height: 28, borderRadius: 14,
+                    alignItems: 'center', justifyContent: 'center', borderWidth: cartQty > 0 ? 0 : 1, borderColor: ORANGE }}>
+                  <Text style={{ fontSize: cartQty > 0 ? 12 : 17, fontWeight: '900', color: cartQty > 0 ? '#fff' : ORANGE }}>
+                    {cartQty > 0 ? cartQty : '+'}
+                  </Text>
+                </Pressable>
+                {cartQty > 1 && (
+                  <Pressable onPress={onCustomize}>
+                    <Text style={{ fontSize: 9, color: ORANGE, fontWeight: '700' }}>🍽 Customize</Text>
+                  </Pressable>
+                )}
+              </View>
             ) : (
               <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '600' }}>Unavail.</Text>
             )
