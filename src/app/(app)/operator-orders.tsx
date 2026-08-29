@@ -229,6 +229,15 @@ function OperatorOrderCard({
         <Text style={{ fontSize: 11, color: '#888' }}>#{order.order_ref}</Text>
       </View>
 
+      {order.scheduled_for ? (
+        <View style={{ backgroundColor: '#ede9fe', paddingHorizontal: 14, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 12 }}>📅</Text>
+          <Text style={{ fontSize: 12, fontWeight: '800', color: '#6d28d9' }}>
+            Scheduled for {new Date(order.scheduled_for).toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' })}
+          </Text>
+        </View>
+      ) : null}
+
       {/* Vendor */}
       <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' }}>
         <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: '#fff5f0', alignItems: 'center', justifyContent: 'center' }}>
@@ -241,6 +250,25 @@ function OperatorOrderCard({
           </Text>
         </View>
       </View>
+
+      {/* Items for this vendor */}
+      {order.order_items && order.order_items.length > 0 && (
+        <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4, gap: 6, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' }}>
+          <Text style={{ fontSize: 11, color: '#aaa', fontWeight: '700' }}>ITEMS FOR THIS VENDOR</Text>
+          {order.order_items.map((oi) => (
+            <View key={oi.id} style={{ marginBottom: 4 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a' }}>{oi.quantity}× {oi.item_name}</Text>
+              {(oi.plate_notes || []).some((n) => n?.trim()) && (
+                <View style={{ marginTop: 2, marginLeft: 8, gap: 1 }}>
+                  {oi.plate_notes.map((note, idx) => (note?.trim() ? (
+                    <Text key={idx} style={{ fontSize: 11, color: '#888' }}>Plate {idx + 1}: {note}</Text>
+                  ) : null))}
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Delivery Info */}
       <View style={{ padding: 14, gap: 6 }}>
