@@ -142,6 +142,7 @@ export interface Order {
   paystack_reference: string | null;
   created_at: string;
   completed_at: string | null;
+  scheduled_for: string | null; // null = ASAP; otherwise customer-requested delivery time (ISO string)
   // Joined fields
   customer?: Pick<Profile, 'id' | 'name' | 'email'>;
   vendor?: Pick<Vendor, 'id' | 'name'>;
@@ -157,6 +158,7 @@ export interface OrderItem {
   item_name: string;
   price: number;
   quantity: number;
+  plate_notes: string[]; // per-plate customization, parallel array of length `quantity`
   created_at: string;
 }
 
@@ -173,6 +175,7 @@ export interface CartItem {
   menu_item: MenuItem;
   quantity: number;
   vendor: Vendor;
+  plateNotes: string[]; // one entry per plate — customer's per-plate instructions (e.g. "no pepper")
 }
 
 export interface FreeDeliveryPass {
