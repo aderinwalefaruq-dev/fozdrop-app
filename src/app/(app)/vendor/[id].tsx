@@ -8,7 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useSession } from '@/ctx';
 import { getVendorById, getMenuByVendor, getActiveMenuByVendor, toggleMenuItemActive, getSectionsByVendor } from '@/db/api';
 import { useCart } from '@/context/CartContext';
-import { PlateCustomizeModal } from '@/components/PlateCustomizeModal';
 import type { Vendor, MenuItem, MenuSection } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
 
@@ -19,14 +18,16 @@ export default function VendorStoreView() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { session } = useSession();
-  const { addItem, updatePlateNote, items: cartItems, totalItems } = useCart();
+  const {
+    plates, activePlateId, setActivePlate, getOrCreateActivePlateForVendor,
+    addPlate, removePlate, addItemToPlate, totalItems,
+  } = useCart();
 
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [sections, setSections] = useState<MenuSection[]>([]);
   const [activeSection, setActiveSection] = useState<string>('all');
   const [loading, setLoading] = useState(true);
-  const [customizeItem, setCustomizeItem] = useState<MenuItem | null>(null);
 
   const loadData = useCallback(async () => {
     if (!id || !session?.user?.id) { setLoading(false); return; }
@@ -46,10 +47,14 @@ export default function VendorStoreView() {
 
   const isVendorOwner = vendor?.owner_id === session?.user?.id;
 
+  // This vendor's plates, in creation order (Plate A, Plate B, ...)
+  const vendorPlates = vendor ? plates.filter((p) => p.vendor.id === vendor.id) : [];
+  const activePlate = vendorPlates.find((p) => p.id === activePlateId) ?? vendorPlates[0] ?? null;
+
   const handleAddToCart = (item: MenuItem) => {
     if (!vendor) return;
-    const sectionName = sections.find((s) => s.id === item.section_id)?.name;
-    addItem(item, vendor, sectionName);
+    const plateId = getOrCreateActivePlateForVendor(vendor);
+    addItemToPlate(plateId, item);
   };
 
   const handleToggleActive = async (item: MenuItem) => {
@@ -57,16 +62,8 @@ export default function VendorStoreView() {
     loadData();
   };
 
-  const cartCount = cartItems
-    .filter((c) => c.vendor.id === vendor?.id)
-    .reduce((sum, c) => sum + c.quantity, 0);
-
   // Group items by section for display
   const unsectionedItems = menuItems.filter((m) => !m.section_id);
-  const sectionedGroups = sections.map((s) => ({
-    section: s,
-    items: menuItems.filter((m) => m.section_id === s.id),
-  })).filter((g) => g.items.length > 0);
 
   // Filter by active section tab
   const visibleItems = activeSection === 'all'
@@ -121,6 +118,47 @@ export default function VendorStoreView() {
               </View>
             </View>
 
+            {/* Plates bar — lets a customer build more than one independent
+                basket from this vendor (e.g. Plate A for themselves, Plate B
+                for a friend), each with its own combination of items. Only
+                shown once a plate exists, so single-plate ordering (the
+                common case) stays frictionless — the first "+" on any item
+                silently creates "Plate A". */}
+            {!isVendorOwner && vendor && vendorPlates.length > 0 && (
+              <View style={{ backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f0f0f0', paddingVertical: 10 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, flexDirection: 'row', alignItems: 'center' }}>
+                  {vendorPlates.map((plate) => {
+                    const isActive = plate.id === activePlate?.id;
+                    const itemCount = plate.items.reduce((s, i) => s + i.quantity, 0);
+                    return (
+                      <Pressable
+                        key={plate.id}
+                        onPress={() => setActivePlate(plate.id)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+                          borderWidth: 1.5, borderColor: isActive ? ORANGE : '#e5e5e5', backgroundColor: isActive ? ORANGE : '#fff' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: isActive ? '#fff' : '#1a1a1a' }}>
+                          {plate.label}{itemCount > 0 ? ` (${itemCount})` : ''}
+                        </Text>
+                        {vendorPlates.length > 1 && (
+                          <Pressable hitSlop={8} onPress={() => removePlate(plate.id)}>
+                            <Text style={{ fontSize: 12, fontWeight: '900', color: isActive ? '#fff' : '#aaa' }}>✕</Text>
+                          </Pressable>
+                        )}
+                      </Pressable>
+                    );
+                  })}
+                  <Pressable
+                    onPress={() => addPlate(vendor)}
+                    style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: ORANGE, borderStyle: 'dashed' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: ORANGE }}>+ Add Plate</Text>
+                  </Pressable>
+                </ScrollView>
+                <Text style={{ fontSize: 11, color: '#999', paddingHorizontal: 16, marginTop: 6 }}>
+                  Adding items goes into <Text style={{ fontWeight: '800', color: '#555' }}>{activePlate?.label}</Text> — tap another plate to switch, or add a new one for a second, separately-packed order.
+                </Text>
+              </View>
+            )}
+
             {/* Section tabs */}
             {hasSections && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false}
@@ -151,14 +189,13 @@ export default function VendorStoreView() {
           <MenuItemRow
             item={item}
             isVendorOwner={isVendorOwner}
-            cartQty={cartItems.find((c) => c.menu_item.id === item.id)?.quantity || 0}
+            cartQty={activePlate?.items.find((i) => i.menuItemId === item.id)?.quantity || 0}
             onAdd={() => handleAddToCart(item)}
             onToggleActive={() => handleToggleActive(item)}
-            onCustomize={() => setCustomizeItem(item)}
           />
         )}
         ListFooterComponent={
-          cartCount > 0 && !isVendorOwner ? (
+          totalItems > 0 && !isVendorOwner ? (
             <Pressable
               onPress={() => router.push('/(app)/checkout')}
               style={{ margin: 16, marginTop: 12, backgroundColor: ORANGE,
@@ -172,14 +209,6 @@ export default function VendorStoreView() {
             </Pressable>
           ) : null
         }
-      />
-
-      <PlateCustomizeModal
-        visible={!!customizeItem}
-        item={customizeItem}
-        plateNotes={cartItems.find((c) => c.menu_item.id === customizeItem?.id)?.plateNotes ?? []}
-        onChangeNote={(idx, note) => customizeItem && updatePlateNote(customizeItem.id, idx, note)}
-        onClose={() => setCustomizeItem(null)}
       />
     </View>
   );
@@ -196,14 +225,13 @@ function SectionTab({ label, active, onPress }: { label: string; active: boolean
 }
 
 function MenuItemRow({
-  item, isVendorOwner, cartQty, onAdd, onToggleActive, onCustomize,
+  item, isVendorOwner, cartQty, onAdd, onToggleActive,
 }: {
   item: MenuItem;
   isVendorOwner: boolean;
   cartQty: number;
   onAdd: () => void;
   onToggleActive: () => void;
-  onCustomize: () => void;
 }) {
   return (
     <View style={{ marginHorizontal: 16, marginBottom: 7, backgroundColor: '#fff', borderRadius: 12,
@@ -233,20 +261,13 @@ function MenuItemRow({
             </Pressable>
           ) : (
             item.is_active ? (
-              <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                <Pressable onPress={onAdd}
-                  style={{ backgroundColor: cartQty > 0 ? ORANGE : '#fff5f0', width: 28, height: 28, borderRadius: 14,
-                    alignItems: 'center', justifyContent: 'center', borderWidth: cartQty > 0 ? 0 : 1, borderColor: ORANGE }}>
-                  <Text style={{ fontSize: cartQty > 0 ? 12 : 17, fontWeight: '900', color: cartQty > 0 ? '#fff' : ORANGE }}>
-                    {cartQty > 0 ? cartQty : '+'}
-                  </Text>
-                </Pressable>
-                {cartQty > 1 && (
-                  <Pressable onPress={onCustomize}>
-                    <Text style={{ fontSize: 9, color: ORANGE, fontWeight: '700' }}>🍽 Customize</Text>
-                  </Pressable>
-                )}
-              </View>
+              <Pressable onPress={onAdd}
+                style={{ backgroundColor: cartQty > 0 ? ORANGE : '#fff5f0', width: 28, height: 28, borderRadius: 14,
+                  alignItems: 'center', justifyContent: 'center', borderWidth: cartQty > 0 ? 0 : 1, borderColor: ORANGE }}>
+                <Text style={{ fontSize: cartQty > 0 ? 12 : 17, fontWeight: '900', color: cartQty > 0 ? '#fff' : ORANGE }}>
+                  {cartQty > 0 ? cartQty : '+'}
+                </Text>
+              </Pressable>
             ) : (
               <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '600' }}>Unavail.</Text>
             )
