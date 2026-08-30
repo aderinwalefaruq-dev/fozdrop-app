@@ -158,7 +158,7 @@ export interface OrderItem {
   item_name: string;
   price: number;
   quantity: number;
-  plate_notes: string[]; // per-plate customization, parallel array of length `quantity`
+  plate_label: string; // which plate within the order this line belongs to, e.g. "Plate A" — lets a single vendor order contain multiple distinct plates, each with its own set of items
   created_at: string;
 }
 
@@ -170,12 +170,24 @@ export interface SupportRequest {
   created_at: string;
 }
 
-// Cart item for in-app state management
-export interface CartItem {
-  menu_item: MenuItem;
+// ── Cart (plate-basket model) ────────────────────────────────────────────────
+// A "Plate" is an independent basket of menu items from one vendor — e.g.
+// Plate A = 3x Jollof Rice + 1x Egg + 1x Salad, Plate B = 1x Fufu + 1x Egusi
+// + 1x Beef, both from the same vendor. This is NOT "N copies of the same
+// item" — each plate can hold an entirely different combination of items.
+
+export interface PlateLineItem {
+  menuItemId: string;
+  itemName: string;
+  price: number;
   quantity: number;
+}
+
+export interface Plate {
+  id: string;
   vendor: Vendor;
-  plateNotes: string[]; // one entry per plate — customer's per-plate instructions (e.g. "no pepper")
+  label: string; // "Plate A", "Plate B", ... auto-assigned per vendor, in order created
+  items: PlateLineItem[];
 }
 
 export interface FreeDeliveryPass {
