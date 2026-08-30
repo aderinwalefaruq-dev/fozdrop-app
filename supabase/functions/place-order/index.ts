@@ -29,10 +29,23 @@ Deno.serve(async (req) => {
       deliveryNotes,
       subtotal,
       useDeliveryPass, // boolean — customer elected to redeem 1 free delivery pass
+      scheduledFor,    // ISO string or null/undefined — customer-requested delivery time
     } = body;
 
     if (!customerId || !Array.isArray(vendorGroups) || vendorGroups.length === 0 || !dropoffLocationId || !subtotal) {
       return json({ error: "Missing required fields" }, 400);
+    }
+
+    // Validate the scheduled time server-side — never trust the client alone
+    // for something that changes operational behavior (the client already
+    // restricts choices to future slots, but that's UX, not enforcement).
+    let scheduledForDate: string | null = null;
+    if (scheduledFor) {
+      const d = new Date(scheduledFor);
+      if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
+        return json({ error: "Scheduled delivery time must be a valid time in the future" }, 400);
+      }
+      scheduledForDate = d.toISOString();
     }
 
     // Verify caller
@@ -120,8 +133,25 @@ Deno.serve(async (req) => {
 
     // Create one order per vendor group
     for (const group of vendorGroups) {
-      const { vendorId, subtotal: vendorSubtotal, items, packagingRequested } = group;
-      if (!vendorId || !Array.isArray(items) || items.length === 0) continue;
+      const { vendorId, subtotal: vendorSubtotal, plates, packagingRequested } = group;
+      if (!vendorId || !Array.isArray(plates) || plates.length === 0) continue;
+
+      // Flatten this vendor's plates into order_item rows, keeping each
+      // row tagged with which plate it belongs to. Skip empty plates
+      // (e.g. one the customer created but never added items to).
+      type PlateInput = { label: string; items: Array<{ menuId: string; itemName: string; price: number; quantity: number }> };
+      const orderItemRows = (plates as PlateInput[])
+        .filter((plate) => Array.isArray(plate.items) && plate.items.length > 0)
+        .flatMap((plate) =>
+          plate.items.map((item) => ({
+            menu_id: item.menuId,
+            item_name: item.itemName,
+            price: item.price,
+            quantity: item.quantity,
+            plate_label: plate.label,
+          }))
+        );
+      if (orderItemRows.length === 0) continue;
 
       // Delivery fee only on the first order; subsequent orders ₦0
       const isFirst = orderIds.length === 0;
@@ -145,6 +175,7 @@ Deno.serve(async (req) => {
           packaging_fee: orderPackagingFee,
           total_price: orderTotal,
           status: "Pending",
+          scheduled_for: scheduledForDate,
         })
         .select("id")
         .maybeSingle();
@@ -156,15 +187,9 @@ Deno.serve(async (req) => {
 
       orderIds.push(orderData.id);
 
-      // Insert order items
+      // Insert order items, each tagged with its plate_label
       await svc.from("order_items").insert(
-        items.map((item: { menuId: string; itemName: string; price: number; quantity: number }) => ({
-          order_id: orderData.id,
-          menu_id: item.menuId,
-          item_name: item.itemName,
-          price: item.price,
-          quantity: item.quantity,
-        }))
+        orderItemRows.map((row) => ({ ...row, order_id: orderData.id }))
       );
 
       // Credit vendor wallet with their subtotal + any packaging fee
@@ -300,6 +325,15 @@ Deno.serve(async (req) => {
       }).catch(() => {/* non-blocking */});
     }
 
+    // Mention the scheduled time (if any) in vendor/operator notification text,
+    // so they know not to rush a pre-order. Note: this still sends the
+    // notification immediately at order-placement time — actually *delaying*
+    // the notification until closer to the scheduled time would need a
+    // separate cron job, which is not implemented here.
+    const scheduleText = scheduledForDate
+      ? ` for ${new Date(scheduledForDate).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" })}`
+      : "";
+
     // ── Fire push notifications (non-blocking) ────────────────────────────
     // Notify vendor(s) + all operators about the new order(s)
     for (const group of vendorGroups) {
@@ -327,7 +361,7 @@ Deno.serve(async (req) => {
             targets: "user",
             userId: vendorInfo.owner_id,
             title: "New Order Received! 🍔",
-            body: `Order #${shortRef} has been placed. Tap to view and prepare.`,
+            body: `Order #${shortRef} has been placed${scheduleText}. Tap to view and prepare.`,
             url: "/vendor-orders",
           }),
         }).catch(() => {/* non-blocking */});
@@ -344,7 +378,7 @@ Deno.serve(async (req) => {
           targets: "role",
           role: "Operator",
           title: "New Campus Order Placed! 🔔",
-          body: `Order #${shortRef} was placed at ${vendorName} for ${amount}.`,
+          body: `Order #${shortRef} was placed at ${vendorName} for ${amount}${scheduleText}.`,
           url: "/operator-orders",
         }),
       }).catch(() => {/* non-blocking */});
