@@ -229,25 +229,35 @@ function VendorOrderCard({
         ) : null}
       </View>
 
-      {/* Order Items */}
+      {/* Order Items, grouped by plate — this order can contain more than
+          one independent plate (e.g. Plate A = Jollof Rice + Egg + Salad,
+          Plate B = Fufu + Egusi + Beef), each its own basket to pack. */}
       <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-        {(order.order_items || []).map((item) => (
-          <View key={item.id} style={{ paddingVertical: 3 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={{ fontSize: 13, color: '#333', flex: 1 }} numberOfLines={1}>
-                {item.quantity}× {item.item_name}
-              </Text>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#555' }}>{formatNaira(item.price * item.quantity)}</Text>
+        {(() => {
+          const items = order.order_items || [];
+          const byPlate = new Map<string, typeof items>();
+          items.forEach((item) => {
+            const key = item.plate_label || 'Plate A';
+            byPlate.set(key, [...(byPlate.get(key) ?? []), item]);
+          });
+          const plateEntries = Array.from(byPlate.entries());
+          const multiPlate = plateEntries.length > 1;
+          return plateEntries.map(([label, plateItems]) => (
+            <View key={label} style={{ marginBottom: multiPlate ? 8 : 0 }}>
+              {multiPlate && (
+                <Text style={{ fontSize: 12, fontWeight: '900', color: ORANGE, marginBottom: 3 }}>🍽 {label}</Text>
+              )}
+              {plateItems.map((item) => (
+                <View key={item.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3, marginLeft: multiPlate ? 8 : 0 }}>
+                  <Text style={{ fontSize: 13, color: '#333', flex: 1 }} numberOfLines={1}>
+                    {item.quantity}× {item.item_name}
+                  </Text>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#555' }}>{formatNaira(item.price * item.quantity)}</Text>
+                </View>
+              ))}
             </View>
-            {(item.plate_notes || []).some((n) => n?.trim()) && (
-              <View style={{ marginTop: 2, marginLeft: 8 }}>
-                {item.plate_notes.map((note, idx) => (note?.trim() ? (
-                  <Text key={idx} style={{ fontSize: 11, color: '#888' }}>Plate {idx + 1}: {note}</Text>
-                ) : null))}
-              </View>
-            )}
-          </View>
-        ))}
+          ));
+        })()}
       </View>
 
       {/* Footer */}
