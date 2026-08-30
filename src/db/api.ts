@@ -272,8 +272,13 @@ export async function placeOrder(params: {
   vendorGroups: Array<{
     vendorId: string;
     subtotal: number;
-    items: Array<{ menuId: string; itemName: string; price: number; quantity: number; plateNotes: string[] }>;
     packagingRequested?: boolean;
+    // Each plate is an independent basket of items from this vendor — e.g.
+    // Plate A = Jollof Rice + Egg + Salad, Plate B = Fufu + Egusi + Beef.
+    plates: Array<{
+      label: string;
+      items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
+    }>;
   }>;
   dropoffLocationId: string;
   locationDescription: string;
