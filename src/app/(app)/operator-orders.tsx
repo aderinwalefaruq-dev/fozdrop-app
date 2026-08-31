@@ -265,18 +265,23 @@ function OperatorOrderCard({
         return (
           <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4, gap: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' }}>
             <Text style={{ fontSize: 11, color: '#aaa', fontWeight: '700' }}>ITEMS FOR THIS VENDOR</Text>
-            {plateEntries.map(([label, plateItems]) => (
-              <View key={label}>
-                {multiPlate && (
-                  <Text style={{ fontSize: 12, fontWeight: '900', color: ORANGE, marginBottom: 3 }}>🍽 {label}</Text>
-                )}
-                {plateItems.map((oi) => (
-                  <Text key={oi.id} style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a', marginLeft: multiPlate ? 8 : 0 }}>
-                    {oi.quantity}× {oi.item_name}
-                  </Text>
-                ))}
-              </View>
-            ))}
+            {plateEntries.map(([label, plateItems]) => {
+              const packed = !!order.plate_packaging?.[label];
+              return (
+                <View key={label}>
+                  {(multiPlate || packed) && (
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: ORANGE, marginBottom: 3 }}>
+                      {multiPlate ? `🍽 ${label}` : ''}{packed ? `${multiPlate ? '  ' : ''}📦 Pack this plate` : ''}
+                    </Text>
+                  )}
+                  {plateItems.map((oi) => (
+                    <Text key={oi.id} style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a', marginLeft: multiPlate ? 8 : 0 }}>
+                      {oi.quantity}× {oi.item_name}
+                    </Text>
+                  ))}
+                </View>
+              );
+            })}
           </View>
         );
       })()}
