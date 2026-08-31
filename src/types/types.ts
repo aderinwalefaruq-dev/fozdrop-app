@@ -143,6 +143,7 @@ export interface Order {
   created_at: string;
   completed_at: string | null;
   scheduled_for: string | null; // null = ASAP; otherwise customer-requested delivery time (ISO string)
+  plate_packaging: Record<string, boolean>; // which plate labels within this order had packaging requested, e.g. { "Plate A": true, "Plate B": false }
   // Joined fields
   customer?: Pick<Profile, 'id' | 'name' | 'email'>;
   vendor?: Pick<Vendor, 'id' | 'name'>;
