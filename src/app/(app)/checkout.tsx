@@ -32,14 +32,15 @@ export default function CheckoutScreen() {
   const [showTopUpModal, setShowTopUpModal] = useState(false);
   const [error, setError] = useState('');
   const [appOpen, setAppOpen] = useState(true);
-  // Per-vendor pack/plate opt-in: vendorId → boolean
-  const [packVendors, setPackVendors] = useState<Record<string, boolean>>({});
+  // Per-plate pack opt-in: plate.id → boolean (packaging is a per-plate
+  // choice — Plate A might need a togo box while Plate B doesn't).
+  const [packPlates, setPackPlates] = useState<Record<string, boolean>>({});
   const [deliveryFee, setDeliveryFee] = useState(199);
   const [packagingFeeUnit, setPackagingFeeUnit] = useState(200);
   const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  const packagingFee = vendors.filter((v) => packVendors[v.id]).length * packagingFeeUnit;
+  const packagingFee = plates.filter((p) => packPlates[p.id]).length * packagingFeeUnit;
   const totalPrice = subtotal + deliveryFee + packagingFee;
 
   const loadData = useCallback(async () => {
@@ -61,8 +62,8 @@ export default function CheckoutScreen() {
 
   useFocusEffect(useCallback(() => { setLoading(true); loadData(); }, [loadData]));
 
-  const togglePack = (vendorId: string) =>
-    setPackVendors((prev) => ({ ...prev, [vendorId]: !prev[vendorId] }));
+  const togglePack = (plateId: string) =>
+    setPackPlates((prev) => ({ ...prev, [plateId]: !prev[plateId] }));
 
   const hasEnoughBalance = (wallet?.customer_balance ?? 0) >= totalPrice;
   const canPlaceOrder = appOpen && hasEnoughBalance && selectedLocation !== null && plates.length > 0;
@@ -80,7 +81,6 @@ export default function CheckoutScreen() {
       return {
         vendorId: v.id,
         subtotal: vendorSubtotal,
-        packagingRequested: !!packVendors[v.id],
         plates: vendorPlates.map((p) => ({
           label: p.label,
           items: p.items.map((i) => ({
@@ -89,6 +89,7 @@ export default function CheckoutScreen() {
             price: i.price,
             quantity: i.quantity,
           })),
+          packagingRequested: !!packPlates[p.id],
         })),
       };
     });
@@ -191,7 +192,6 @@ export default function CheckoutScreen() {
           const vendorSubtotal = vendorPlates.reduce(
             (s, p) => s + p.items.reduce((s2, i) => s2 + i.price * i.quantity, 0), 0
           );
-          const packOn = !!packVendors[v.id];
           return (
             <View key={v.id} style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 4 }}>
               {/* Vendor header */}
@@ -202,77 +202,84 @@ export default function CheckoutScreen() {
                 <Text style={{ fontSize: 15, fontWeight: '800', color: '#1a1a1a', flex: 1 }}>🏪 {v.name}</Text>
               </View>
 
-              {/* Each plate is its own labeled group of items */}
-              {vendorPlates.map((plate) => (
-                <View key={plate.id} style={{ marginBottom: 12, backgroundColor: '#fafafa', borderRadius: 12, padding: 12 }}>
-                  {vendorPlates.length > 1 && (
-                    <Text style={{ fontSize: 13, fontWeight: '900', color: ORANGE, marginBottom: 6 }}>🍽 {plate.label}</Text>
-                  )}
-                  {plate.items.map((i) => (
-                    <View key={i.menuItemId} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 8 }}>
-                      <Text style={{ fontSize: 13, color: '#555', flex: 1 }} numberOfLines={1}>{i.itemName}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {/* Each plate is its own labeled group of items, with its own
+                  packaging choice — Plate A might need a togo box while
+                  Plate B doesn't. */}
+              {vendorPlates.map((plate) => {
+                const packOn = !!packPlates[plate.id];
+                return (
+                  <View key={plate.id} style={{ marginBottom: 12, backgroundColor: '#fafafa', borderRadius: 12, padding: 12 }}>
+                    {vendorPlates.length > 1 && (
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: ORANGE, marginBottom: 6 }}>🍽 {plate.label}</Text>
+                    )}
+                    {plate.items.map((i) => (
+                      <View key={i.menuItemId} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 8 }}>
+                        <Text style={{ fontSize: 13, color: '#555', flex: 1 }} numberOfLines={1}>{i.itemName}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Pressable
+                            onPress={() => updateItemQuantity(plate.id, i.menuItemId, i.quantity - 1)}
+                            style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 16, fontWeight: '700', color: '#555', lineHeight: 20 }}>−</Text>
+                          </Pressable>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a', minWidth: 18, textAlign: 'center' }}>{i.quantity}</Text>
+                          <Pressable
+                            onPress={() => updateItemQuantity(plate.id, i.menuItemId, i.quantity + 1)}
+                            style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: ORANGE, alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff', lineHeight: 20 }}>+</Text>
+                          </Pressable>
+                        </View>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a1a', minWidth: 60, textAlign: 'right' }}>{formatNaira(i.price * i.quantity)}</Text>
                         <Pressable
-                          onPress={() => updateItemQuantity(plate.id, i.menuItemId, i.quantity - 1)}
-                          style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 16, fontWeight: '700', color: '#555', lineHeight: 20 }}>−</Text>
-                        </Pressable>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a', minWidth: 18, textAlign: 'center' }}>{i.quantity}</Text>
-                        <Pressable
-                          onPress={() => updateItemQuantity(plate.id, i.menuItemId, i.quantity + 1)}
-                          style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: ORANGE, alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff', lineHeight: 20 }}>+</Text>
+                          onPress={() => removeItemFromPlate(plate.id, i.menuItemId)}
+                          style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: '900' }}>✕</Text>
                         </Pressable>
                       </View>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#1a1a1a', minWidth: 60, textAlign: 'right' }}>{formatNaira(i.price * i.quantity)}</Text>
-                      <Pressable
-                        onPress={() => removeItemFromPlate(plate.id, i.menuItemId)}
-                        style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: '900' }}>✕</Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                  {vendorPlates.length > 1 && (
-                    <Text style={{ fontSize: 12, color: '#888', marginTop: 6, textAlign: 'right' }}>
-                      {plate.label} subtotal: {formatNaira(plate.items.reduce((s, i) => s + i.price * i.quantity, 0))}
-                    </Text>
-                  )}
-                </View>
-              ))}
+                    ))}
+                    {vendorPlates.length > 1 && (
+                      <Text style={{ fontSize: 12, color: '#888', marginTop: 6, marginBottom: 8, textAlign: 'right' }}>
+                        {plate.label} subtotal: {formatNaira(plate.items.reduce((s, i) => s + i.price * i.quantity, 0))}
+                      </Text>
+                    )}
+
+                    {/* Pack/plate toggle — scoped to THIS plate only */}
+                    <Pressable
+                      onPress={() => togglePack(plate.id)}
+                      style={{
+                        marginTop: vendorPlates.length > 1 ? 0 : 12,
+                        flexDirection: 'row', alignItems: 'center', gap: 12,
+                        backgroundColor: packOn ? '#fff7ed' : '#fff',
+                        borderRadius: 12, padding: 12,
+                        borderWidth: 1.5, borderColor: packOn ? '#fed7aa' : '#e5e5e5',
+                      }}
+                    >
+                      <View style={{
+                        width: 24, height: 24, borderRadius: 12,
+                        backgroundColor: packOn ? ORANGE : '#e5e5e5',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '900' }}>{packOn ? '✓' : ''}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: packOn ? '#92400e' : '#444' }}>
+                          🥡 Add pack / plate (+{formatNaira(packagingFeeUnit)})
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                          {packOn
+                            ? `Pack fee added for ${vendorPlates.length > 1 ? plate.label : 'this order'}`
+                            : `Tap to add packaging for ${vendorPlates.length > 1 ? plate.label : "this vendor's items"}`}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                );
+              })}
 
               {/* Vendor subtotal */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 2 }}>
                 <Text style={{ fontSize: 13, color: '#888' }}>Vendor subtotal</Text>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: '#555' }}>{formatNaira(vendorSubtotal)}</Text>
               </View>
-
-              {/* Pack/plate toggle */}
-              <Pressable
-                onPress={() => togglePack(v.id)}
-                style={{
-                  marginTop: 12,
-                  flexDirection: 'row', alignItems: 'center', gap: 12,
-                  backgroundColor: packOn ? '#fff7ed' : '#fafafa',
-                  borderRadius: 12, padding: 12,
-                  borderWidth: 1.5, borderColor: packOn ? '#fed7aa' : '#e5e5e5',
-                }}
-              >
-                <View style={{
-                  width: 24, height: 24, borderRadius: 12,
-                  backgroundColor: packOn ? ORANGE : '#e5e5e5',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '900' }}>{packOn ? '✓' : ''}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '800', color: packOn ? '#92400e' : '#444' }}>
-                    🥡 Add pack / plate (+{formatNaira(packagingFeeUnit)})
-                  </Text>
-                  <Text style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-                    {packOn ? 'Pack fee added for this vendor' : 'Tap to add packaging for this vendor\'s items'}
-                  </Text>
-                </View>
-              </Pressable>
             </View>
           );
         })}
@@ -293,7 +300,7 @@ export default function CheckoutScreen() {
           {packagingFee > 0 && (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 }}>
               <Text style={{ fontSize: 13, color: '#888' }}>
-                Pack / plate ({vendors.filter((v) => packVendors[v.id]).length}×)
+                Pack / plate ({plates.filter((p) => packPlates[p.id]).length}×)
               </Text>
               <Text style={{ fontSize: 13, color: '#555' }}>{formatNaira(packagingFee)}</Text>
             </View>
