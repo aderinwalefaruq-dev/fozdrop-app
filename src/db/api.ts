@@ -272,12 +272,14 @@ export async function placeOrder(params: {
   vendorGroups: Array<{
     vendorId: string;
     subtotal: number;
-    packagingRequested?: boolean;
     // Each plate is an independent basket of items from this vendor — e.g.
     // Plate A = Jollof Rice + Egg + Salad, Plate B = Fufu + Egusi + Beef.
+    // Packaging is chosen per plate (Plate A might need a togo box while
+    // Plate B doesn't), not once for the whole vendor.
     plates: Array<{
       label: string;
       items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
+      packagingRequested?: boolean;
     }>;
   }>;
   dropoffLocationId: string;
