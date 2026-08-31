@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const {
       customerId,
-      vendorGroups,   // Array<{ vendorId, subtotal, items, packagingRequested? }>
+      vendorGroups,   // Array<{ vendorId, subtotal, plates: [{ label, items, packagingRequested? }] }>
       dropoffLocationId,
       locationDescription,
       deliveryNotes,
@@ -101,11 +101,17 @@ Deno.serve(async (req) => {
       passId = pass.id;
     }
 
-    // Total packaging fee across all vendor groups that opted in
-    const totalPackagingFee = vendorGroups.reduce(
-      (sum: number, g: { packagingRequested?: boolean }) => sum + (g.packagingRequested ? PACKAGING_FEE_UNIT : 0),
-      0
-    );
+    // Total packaging fee across every plate, across every vendor group,
+    // that opted in — packaging is a per-plate choice now, not per vendor.
+    type PackagingPlateInput = { items?: unknown[]; packagingRequested?: boolean };
+    type PackagingGroupInput = { plates?: PackagingPlateInput[] };
+    const totalPackagingFee = (vendorGroups as PackagingGroupInput[]).reduce((sum, g) => {
+      const plates = Array.isArray(g.plates) ? g.plates : [];
+      const packedNonEmptyPlates = plates.filter(
+        (p) => Array.isArray(p.items) && p.items.length > 0 && p.packagingRequested
+      ).length;
+      return sum + packedNonEmptyPlates * PACKAGING_FEE_UNIT;
+    }, 0);
 
     const totalPrice = Number(subtotal) + effectiveDeliveryFee + totalPackagingFee;
 
@@ -133,30 +139,43 @@ Deno.serve(async (req) => {
 
     // Create one order per vendor group
     for (const group of vendorGroups) {
-      const { vendorId, subtotal: vendorSubtotal, plates, packagingRequested } = group;
+      const { vendorId, subtotal: vendorSubtotal, plates } = group;
       if (!vendorId || !Array.isArray(plates) || plates.length === 0) continue;
 
       // Flatten this vendor's plates into order_item rows, keeping each
       // row tagged with which plate it belongs to. Skip empty plates
       // (e.g. one the customer created but never added items to).
-      type PlateInput = { label: string; items: Array<{ menuId: string; itemName: string; price: number; quantity: number }> };
-      const orderItemRows = (plates as PlateInput[])
-        .filter((plate) => Array.isArray(plate.items) && plate.items.length > 0)
-        .flatMap((plate) =>
-          plate.items.map((item) => ({
-            menu_id: item.menuId,
-            item_name: item.itemName,
-            price: item.price,
-            quantity: item.quantity,
-            plate_label: plate.label,
-          }))
-        );
+      type PlateInput = {
+        label: string;
+        items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
+        packagingRequested?: boolean;
+      };
+      const nonEmptyPlates = (plates as PlateInput[]).filter(
+        (plate) => Array.isArray(plate.items) && plate.items.length > 0
+      );
+      const orderItemRows = nonEmptyPlates.flatMap((plate) =>
+        plate.items.map((item) => ({
+          menu_id: item.menuId,
+          item_name: item.itemName,
+          price: item.price,
+          quantity: item.quantity,
+          plate_label: plate.label,
+        }))
+      );
       if (orderItemRows.length === 0) continue;
+
+      // Packaging is chosen per plate — sum the fee across every plate in
+      // THIS order that opted in, and record which plate labels were
+      // packed so the vendor/operator can see exactly which plate needs
+      // a togo box.
+      const packedPlates = nonEmptyPlates.filter((plate) => plate.packagingRequested);
+      const orderPackagingFee = packedPlates.length * PACKAGING_FEE_UNIT;
+      const platePackaging: Record<string, boolean> = {};
+      nonEmptyPlates.forEach((plate) => { platePackaging[plate.label] = !!plate.packagingRequested; });
 
       // Delivery fee only on the first order; subsequent orders ₦0
       const isFirst = orderIds.length === 0;
       const orderDeliveryFee = isFirst ? effectiveDeliveryFee : 0;
-      const orderPackagingFee = packagingRequested ? PACKAGING_FEE_UNIT : 0;
       const orderTotal = Number(vendorSubtotal) + orderDeliveryFee + orderPackagingFee;
 
       // Insert order
@@ -173,12 +192,14 @@ Deno.serve(async (req) => {
           subtotal: Number(vendorSubtotal),
           delivery_fee: orderDeliveryFee,
           packaging_fee: orderPackagingFee,
+          plate_packaging: platePackaging,
           total_price: orderTotal,
           status: "Pending",
           scheduled_for: scheduledForDate,
         })
         .select("id")
         .maybeSingle();
+
 
       if (orderErr || !orderData) {
         console.error("Order insert error:", orderErr);
