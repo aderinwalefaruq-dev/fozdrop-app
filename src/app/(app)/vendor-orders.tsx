@@ -5,8 +5,8 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { useSession } from '@/ctx';
-import { getVendorByOwnerId, getVendorOrders, updateOrderStatus, cancelOrder } from '@/db/api';
-import type { Order, Vendor } from '@/types/types';
+import { getOperatorOrders, updateOrderStatus, cancelOrder, getProfile } from '@/db/api';
+import type { Order, Profile } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -17,51 +17,59 @@ const ORANGE = '#F25C19';
 const CREAM = '#FAF6F0';
 
 const STATUS_COLORS: Record<string, string> = {
-  Pending: '#fef3c7',
-  Preparing: '#dbeafe',
+  'Pending': '#fef3c7',
+  'Preparing': '#dbeafe',
   'Out for Delivery': '#ede9fe',
   'Arrived at Dropoff': '#d1fae5',
-  Completed: '#f0fdf4',
-  Cancelled: '#fee2e2',
+  'Completed': '#f0fdf4',
+  'Cancelled': '#fee2e2',
 };
 const STATUS_TEXT_COLORS: Record<string, string> = {
-  Pending: '#92400e',
-  Preparing: '#1d4ed8',
+  'Pending': '#92400e',
+  'Preparing': '#1d4ed8',
   'Out for Delivery': '#6d28d9',
   'Arrived at Dropoff': '#065f46',
-  Completed: '#166534',
-  Cancelled: '#991b1b',
+  'Completed': '#166534',
+  'Cancelled': '#991b1b',
 };
 
-// Vendor can advance: Pending → Preparing → Out for Delivery
-const VENDOR_NEXT_STATUS: Partial<Record<Order['status'], Order['status']>> = {
-  Pending: 'Preparing',
-  Preparing: 'Out for Delivery',
+// Operator can advance through the full pipeline
+const OPERATOR_NEXT: Partial<Record<Order['status'], Order['status']>> = {
+  'Pending': 'Preparing',
+  'Preparing': 'Out for Delivery',
+  'Out for Delivery': 'Arrived at Dropoff',
+  'Arrived at Dropoff': 'Completed',
+};
+const NEXT_LABEL: Partial<Record<Order['status'], string>> = {
+  'Pending': 'Mark Preparing',
+  'Preparing': 'Mark Out for Delivery',
+  'Out for Delivery': 'Mark Arrived',
+  'Arrived at Dropoff': 'Mark Completed',
 };
 
-// Vendor can only cancel Pending orders (food not started yet)
-const VENDOR_CANCELLABLE: Order['status'][] = ['Pending'];
+// Operator can cancel orders that haven't been completed or already cancelled
+const OPERATOR_CANCELLABLE: Order['status'][] = ['Pending', 'Preparing', 'Out for Delivery', 'Arrived at Dropoff'];
 
-type FilterTab = 'Active' | 'All';
+type FilterTab = 'In Transit' | 'All';
 
-export default function VendorOrdersScreen() {
+export default function OperatorOrdersScreen() {
   const { session } = useSession();
-  const [vendor, setVendor] = useState<Vendor | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterTab>('Active');
+  const [filter, setFilter] = useState<FilterTab>('In Transit');
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
 
   const loadData = useCallback(async () => {
     if (!session?.user?.id) { setLoading(false); setRefreshing(false); return; }
-    const v = await getVendorByOwnerId(session.user.id);
-    setVendor(v);
-    if (v) {
-      const o = await getVendorOrders(v.id);
-      setOrders(o);
-    }
+    const [p, o] = await Promise.all([
+      getProfile(session.user.id),
+      getOperatorOrders(),
+    ]);
+    setProfile(p);
+    setOrders(o);
     setLoading(false);
     setRefreshing(false);
   }, [session]);
@@ -70,11 +78,15 @@ export default function VendorOrdersScreen() {
 
   const onRefresh = () => { setRefreshing(true); loadData(); };
 
-  const handleAdvanceStatus = async (order: Order) => {
-    const next = VENDOR_NEXT_STATUS[order.status];
-    if (!next) return;
+  const handleAdvance = async (order: Order) => {
+    const next = OPERATOR_NEXT[order.status];
+    if (!next || !session?.user?.id) return;
     setUpdating(order.id);
-    await updateOrderStatus(order.id, next);
+    // Stamp this operator as the order's runner. Previously runner_id was
+    // never set anywhere in the normal flow, so admin screens showing
+    // "runner" / "rider" per order were always blank and there was no
+    // record of which operator actually handled a delivery.
+    await updateOrderStatus(order.id, next, session.user.id);
     setUpdating(null);
     loadData();
   };
@@ -89,9 +101,10 @@ export default function VendorOrdersScreen() {
     loadData();
   };
 
-  const displayed = filter === 'Active'
-    ? orders.filter((o) => o.status === 'Pending' || o.status === 'Preparing')
-    : orders;
+  const inTransit = orders.filter(
+    (o) => o.status === 'Out for Delivery' || o.status === 'Arrived at Dropoff'
+  );
+  const displayed = filter === 'In Transit' ? inTransit : orders;
 
   if (loading) {
     return (
@@ -107,21 +120,28 @@ export default function VendorOrdersScreen() {
 
       {/* Header */}
       <View style={{ backgroundColor: ORANGE, paddingTop: 56, paddingBottom: 16, paddingHorizontal: 20 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>Incoming Orders</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>Delivery Runner</Text>
         <Text style={{ color: '#fff', fontSize: 20, fontWeight: '900', marginTop: 2 }}>
-          {vendor?.name || 'My Store'}
+          {profile?.name || 'Operator Dashboard'}
         </Text>
+
+        {/* Stats row */}
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+          <StatPill label="In Transit" value={String(inTransit.length)} bg="rgba(255,255,255,0.25)" />
+          <StatPill label="Preparing" value={String(orders.filter((o) => o.status === 'Pending' || o.status === 'Preparing').length)} bg="rgba(255,255,255,0.15)" />
+          <StatPill label="All Active" value={String(orders.length)} bg="rgba(255,255,255,0.1)" />
+        </View>
       </View>
 
       {/* Filter Tabs */}
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 10, gap: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' }}>
-        {(['Active', 'All'] as FilterTab[]).map((tab) => (
+        {(['In Transit', 'All'] as FilterTab[]).map((tab) => (
           <Pressable
             key={tab}
             onPress={() => setFilter(tab)}
             style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: filter === tab ? ORANGE : '#f0f0f0' }}>
             <Text style={{ fontSize: 13, fontWeight: '700', color: filter === tab ? '#fff' : '#555' }}>
-              {tab}{tab === 'Active' ? ` (${orders.filter((o) => o.status === 'Pending' || o.status === 'Preparing').length})` : ` (${orders.length})`}
+              {tab} ({tab === 'In Transit' ? inTransit.length : orders.length})
             </Text>
           </Pressable>
         ))}
@@ -134,19 +154,19 @@ export default function VendorOrdersScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ORANGE} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-            <Text style={{ fontSize: 44 }}>📋</Text>
+            <Text style={{ fontSize: 44 }}>🛵</Text>
             <Text style={{ fontSize: 16, fontWeight: '800', color: '#1a1a1a', marginTop: 14 }}>
-              {filter === 'Active' ? 'No active orders' : 'No orders yet'}
+              {filter === 'In Transit' ? 'No deliveries in transit' : 'No deliveries yet'}
             </Text>
             <Text style={{ fontSize: 13, color: '#888', marginTop: 4 }}>
-              {filter === 'Active' ? 'New orders will appear here' : 'Orders will show up once customers place them'}
+              Orders ready for delivery will appear here
             </Text>
           </View>
         }
         renderItem={({ item: order }) => (
-          <VendorOrderCard
+          <OperatorOrderCard
             order={order}
-            onAdvance={() => handleAdvanceStatus(order)}
+            onAdvance={() => handleAdvance(order)}
             onCancel={() => setCancelTarget(order)}
             updating={updating === order.id}
           />
@@ -159,7 +179,7 @@ export default function VendorOrdersScreen() {
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel Order?</AlertDialogTitle>
             <AlertDialogDescription>
-              Cancel order #{cancelTarget?.order_ref}? This cannot be undone.
+              Cancel order #{cancelTarget?.order_ref}? This cannot be undone and the customer will be notified.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -176,120 +196,165 @@ export default function VendorOrdersScreen() {
   );
 }
 
-function VendorOrderCard({
+function StatPill({ label, value, bg }: { label: string; value: string; bg: string }) {
+  return (
+    <View style={{ backgroundColor: bg, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 }}>
+      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '900' }}>{value}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11, marginTop: 1 }}>{label}</Text>
+    </View>
+  );
+}
+
+function OperatorOrderCard({
   order, onAdvance, onCancel, updating,
 }: {
   order: Order; onAdvance: () => void; onCancel: () => void; updating: boolean;
 }) {
-  const nextStatus = VENDOR_NEXT_STATUS[order.status];
-  const canCancel = VENDOR_CANCELLABLE.includes(order.status);
-  const nextLabel: Record<string, string> = {
-    'Preparing': 'Mark as Preparing',
-    'Out for Delivery': 'Ready for Pickup',
+  const nextStatus = OPERATOR_NEXT[order.status];
+  const nextLabel = NEXT_LABEL[order.status];
+  const canCancel = OPERATOR_CANCELLABLE.includes(order.status);
+
+  const statusEmoji: Record<string, string> = {
+    'Pending': '🕐', 'Preparing': '👨‍🍳', 'Out for Delivery': '🛵',
+    'Arrived at Dropoff': '📍', 'Completed': '✅', 'Cancelled': '❌',
   };
 
   return (
     <View style={{ backgroundColor: '#fff', borderRadius: 14, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 4 }}>
-      {/* Order Header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, paddingBottom: 10 }}>
-        <View>
-          <Text style={{ fontSize: 13, fontWeight: '900', color: '#1a1a1a' }}>#{order.order_ref}</Text>
-          <Text style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-            {new Date(order.created_at).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}
-            {' • '}
-            {new Date(order.created_at).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}
-          </Text>
-        </View>
-        <View style={{ backgroundColor: STATUS_COLORS[order.status] || '#f5f5f5', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
-          <Text style={{ fontSize: 11, fontWeight: '800', color: STATUS_TEXT_COLORS[order.status] || '#555' }}>
-            {order.status}
-          </Text>
-        </View>
+      {/* Status Bar */}
+      <View style={{ backgroundColor: STATUS_COLORS[order.status] || '#f5f5f5', paddingHorizontal: 14, paddingVertical: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ fontSize: 12, fontWeight: '800', color: STATUS_TEXT_COLORS[order.status] || '#555' }}>
+          {statusEmoji[order.status] || ''} {order.status}
+        </Text>
+        <Text style={{ fontSize: 11, color: '#888' }}>#{order.order_ref}</Text>
       </View>
 
       {order.scheduled_for ? (
-        <View style={{ marginHorizontal: 14, marginBottom: 8, backgroundColor: '#ede9fe', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}>
-          <Text style={{ fontSize: 11 }}>📅</Text>
-          <Text style={{ fontSize: 11, fontWeight: '800', color: '#6d28d9' }}>
+        <View style={{ backgroundColor: '#ede9fe', paddingHorizontal: 14, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 12 }}>📅</Text>
+          <Text style={{ fontSize: 12, fontWeight: '800', color: '#6d28d9' }}>
             Scheduled for {new Date(order.scheduled_for).toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' })}
           </Text>
         </View>
       ) : null}
 
-      {/* Customer + Dropoff */}
-      <View style={{ paddingHorizontal: 14, paddingBottom: 10, gap: 4 }}>
-        <Text style={{ fontSize: 13, color: '#555' }}>
-          👤 {(order.customer as { name?: string })?.name || 'Customer'}
-        </Text>
-        <Text style={{ fontSize: 13, color: '#555' }} numberOfLines={1}>
-          📍 {(order.dropoff_location as { location_name?: string })?.location_name || 'Unknown location'}
-        </Text>
+      {/* Vendor */}
+      <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' }}>
+        <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: '#fff5f0', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 22 }}>🏪</Text>
+        </View>
+        <View>
+          <Text style={{ fontSize: 11, color: '#aaa', fontWeight: '600' }}>FROM VENDOR</Text>
+          <Text style={{ fontSize: 15, fontWeight: '900', color: '#1a1a1a', marginTop: 1 }}>
+            {(order.vendor as { name?: string })?.name || 'Unknown vendor'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Items for this vendor, grouped by plate — a vendor order can
+          contain multiple independent plates (e.g. Plate A = Jollof Rice +
+          Egg + Salad, Plate B = Fufu + Egusi + Beef), each its own basket. */}
+      {order.order_items && order.order_items.length > 0 && (() => {
+        const byPlate = new Map<string, typeof order.order_items>();
+        order.order_items.forEach((oi) => {
+          const key = oi.plate_label || 'Plate A';
+          byPlate.set(key, [...(byPlate.get(key) ?? []), oi]);
+        });
+        const plateEntries = Array.from(byPlate.entries());
+        const multiPlate = plateEntries.length > 1;
+        return (
+          <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4, gap: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' }}>
+            <Text style={{ fontSize: 11, color: '#aaa', fontWeight: '700' }}>ITEMS FOR THIS VENDOR</Text>
+            {plateEntries.map(([label, plateItems]) => {
+              const packed = !!order.plate_packaging?.[label];
+              return (
+                <View key={label}>
+                  {(multiPlate || packed) && (
+                    <Text style={{ fontSize: 12, fontWeight: '900', color: ORANGE, marginBottom: 3 }}>
+                      {multiPlate ? `🍽 ${label}` : ''}{packed ? `${multiPlate ? '  ' : ''}📦 Pack this plate` : ''}
+                    </Text>
+                  )}
+                  {plateItems.map((oi) => (
+                    <Text key={oi.id} style={{ fontSize: 13, fontWeight: '700', color: '#1a1a1a', marginLeft: multiPlate ? 8 : 0 }}>
+                      {oi.quantity}× {oi.item_name}
+                    </Text>
+                  ))}
+                </View>
+              );
+            })}
+          </View>
+        );
+      })()}
+
+      {/* Delivery Info */}
+      <View style={{ padding: 14, gap: 6 }}>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+          <Text style={{ fontSize: 20 }}>📍</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>DROP-OFF LOCATION</Text>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: '#1a1a1a', marginTop: 2 }}>
+              {(order.dropoff_location as { location_name?: string })?.location_name || 'Unknown location'}
+            </Text>
+            {order.location_description ? (
+              <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{order.location_description}</Text>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+          <Text style={{ fontSize: 20 }}>👤</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: '#888', fontWeight: '600' }}>CUSTOMER</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginTop: 2 }}>
+              {(order.customer as { name?: string })?.name || 'Unknown customer'}
+            </Text>
+          </View>
+        </View>
         {order.delivery_notes ? (
-          <Text style={{ fontSize: 12, color: '#888', fontStyle: 'italic' }}>📝 {order.delivery_notes}</Text>
+          <View style={{ backgroundColor: '#fffbeb', padding: 10, borderRadius: 8 }}>
+            <Text style={{ fontSize: 12, color: '#92400e' }}>📝 {order.delivery_notes}</Text>
+          </View>
         ) : null}
       </View>
 
-      {/* Order Items, grouped by plate — this order can contain more than
-          one independent plate (e.g. Plate A = Jollof Rice + Egg + Salad,
-          Plate B = Fufu + Egusi + Beef), each its own basket to pack. */}
-      <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-        {(() => {
-          const items = order.order_items || [];
-          const byPlate = new Map<string, typeof items>();
-          items.forEach((item) => {
-            const key = item.plate_label || 'Plate A';
-            byPlate.set(key, [...(byPlate.get(key) ?? []), item]);
-          });
-          const plateEntries = Array.from(byPlate.entries());
-          const multiPlate = plateEntries.length > 1;
-          return plateEntries.map(([label, plateItems]) => (
-            <View key={label} style={{ marginBottom: multiPlate ? 8 : 0 }}>
-              {multiPlate && (
-                <Text style={{ fontSize: 12, fontWeight: '900', color: ORANGE, marginBottom: 3 }}>🍽 {label}</Text>
-              )}
-              {plateItems.map((item) => (
-                <View key={item.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3, marginLeft: multiPlate ? 8 : 0 }}>
-                  <Text style={{ fontSize: 13, color: '#333', flex: 1 }} numberOfLines={1}>
-                    {item.quantity}× {item.item_name}
-                  </Text>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#555' }}>{formatNaira(item.price * item.quantity)}</Text>
-                </View>
-              ))}
-            </View>
-          ));
-        })()}
-      </View>
+      {/* Delivery Code */}
+      {order.delivery_code && order.status !== 'Cancelled' ? (
+        <View style={{ marginHorizontal: 14, marginBottom: 12, backgroundColor: '#f0fdf4', borderWidth: 1.5, borderColor: '#16a34a', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: '#166534', letterSpacing: 0.8 }}>🔐 CUSTOMER CODE</Text>
+            <Text style={{ fontSize: 26, fontWeight: '900', color: '#16a34a', letterSpacing: 6, marginTop: 2 }}>
+              {order.delivery_code}
+            </Text>
+          </View>
+          <Text style={{ fontSize: 11, color: '#166534', maxWidth: 100, textAlign: 'right', lineHeight: 16 }}>
+            Verify this code with the customer before handing over
+          </Text>
+        </View>
+      ) : null}
 
       {/* Footer */}
       <View style={{ borderTopWidth: 1, borderTopColor: '#f0f0f0', paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <View>
-            <Text style={{ fontSize: 11, color: '#888' }}>
-              {order.packaging_fee > 0 ? 'Your earnings (incl. packaging)' : 'Subtotal (your earnings)'}
-            </Text>
-            <Text style={{ fontSize: 16, fontWeight: '900', color: ORANGE }}>
-              {formatNaira(order.subtotal + (order.packaging_fee || 0))}
-            </Text>
+            <Text style={{ fontSize: 11, color: '#888' }}>Order Value</Text>
+            <Text style={{ fontSize: 15, fontWeight: '900', color: ORANGE }}>{formatNaira(order.total_price)}</Text>
           </View>
-          {nextStatus ? (
+          {nextStatus && nextLabel ? (
             <Pressable
               onPress={onAdvance}
               disabled={updating}
-              style={{ backgroundColor: ORANGE, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: updating ? 0.7 : 1 }}>
+              style={{ backgroundColor: nextStatus === 'Completed' ? '#16a34a' : ORANGE, paddingHorizontal: 18, paddingVertical: 11, borderRadius: 10, opacity: updating ? 0.7 : 1 }}>
               {updating
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{nextLabel[nextStatus] ?? nextStatus}</Text>}
+                : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{nextLabel}</Text>}
             </Pressable>
-          ) : (
-            <View style={{ backgroundColor: STATUS_COLORS[order.status] || '#f5f5f5', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
-              <Text style={{ fontSize: 12, color: STATUS_TEXT_COLORS[order.status] || '#555', fontWeight: '700' }}>
-                {order.status === 'Out for Delivery' ? '🛵 Runner picking up' : order.status === 'Cancelled' ? '❌ Cancelled' : '✅ Done'}
-              </Text>
+          ) : order.status !== 'Cancelled' ? (
+            <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+              <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '700' }}>✅ Delivered</Text>
             </View>
-          )}
+          ) : null}
         </View>
 
-        {/* Cancel button — only for Pending orders */}
+        {/* Cancel button row */}
         {canCancel ? (
           <Pressable
             onPress={onCancel}
