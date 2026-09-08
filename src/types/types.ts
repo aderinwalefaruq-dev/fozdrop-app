@@ -30,6 +30,16 @@ export interface Announcement {
   created_at: string;
 }
 
+export interface Promotion {
+  id: string;
+  image_url: string;
+  caption: string | null;
+  link_vendor_id: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
 // ── Admin types ──────────────────────────────────────────────────────────────
 
 export interface AdminKPIs {
@@ -142,8 +152,6 @@ export interface Order {
   paystack_reference: string | null;
   created_at: string;
   completed_at: string | null;
-  scheduled_for: string | null; // null = ASAP; otherwise customer-requested delivery time (ISO string)
-  plate_packaging: Record<string, boolean>; // which plate labels within this order had packaging requested, e.g. { "Plate A": true, "Plate B": false }
   // Joined fields
   customer?: Pick<Profile, 'id' | 'name' | 'email'>;
   vendor?: Pick<Vendor, 'id' | 'name'>;
@@ -159,7 +167,6 @@ export interface OrderItem {
   item_name: string;
   price: number;
   quantity: number;
-  plate_label: string; // which plate within the order this line belongs to, e.g. "Plate A" — lets a single vendor order contain multiple distinct plates, each with its own set of items
   created_at: string;
 }
 
@@ -171,24 +178,11 @@ export interface SupportRequest {
   created_at: string;
 }
 
-// ── Cart (plate-basket model) ────────────────────────────────────────────────
-// A "Plate" is an independent basket of menu items from one vendor — e.g.
-// Plate A = 3x Jollof Rice + 1x Egg + 1x Salad, Plate B = 1x Fufu + 1x Egusi
-// + 1x Beef, both from the same vendor. This is NOT "N copies of the same
-// item" — each plate can hold an entirely different combination of items.
-
-export interface PlateLineItem {
-  menuItemId: string;
-  itemName: string;
-  price: number;
+// Cart item for in-app state management
+export interface CartItem {
+  menu_item: MenuItem;
   quantity: number;
-}
-
-export interface Plate {
-  id: string;
   vendor: Vendor;
-  label: string; // "Plate A", "Plate B", ... auto-assigned per vendor, in order created
-  items: PlateLineItem[];
 }
 
 export interface FreeDeliveryPass {

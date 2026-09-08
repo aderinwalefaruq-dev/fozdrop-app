@@ -5,20 +5,23 @@
     "scheme": "fozdropdelivery",
     "version": "1.0.105",
     "orientation": "portrait",
-    "icon": "https://miaoda-edit-image.s3cdn.medo.dev/c7vn93er6ayp/IMG-dcn3ijg4cphc.png",
+           "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "buildNumber": "1",
-      "bundleIdentifier": "com.miaoda.appc7vn93er6ayp"
+    "bundleIdentifier": "com.fozdrop.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      },
+  "adaptiveIcon": {
+    "backgroundColor": "#ffffff"
+},
       "predictiveBackGestureEnabled": false,
       "versionCode": 1,
-      "package": "com.miaoda.appc7vn93er6ayp"
+      "package": "com.fozdrop.app"
     },
     "web": {
       "bundler": "metro",
@@ -39,7 +42,21 @@
       ],
       "expo-image",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#F25C19",
+          "sounds": ["./assets/sounds/order_alert.wav"]
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false
+        }
+      ]
     ],
     "router": {
       "root": "src"

@@ -1,9 +1,10 @@
 import { View, Text, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { useSession } from '@/ctx';
 import { getCustomerOrders } from '@/db/api';
+import { supabase } from '@/client/supabase';
 import type { Order } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
 
@@ -42,6 +43,27 @@ export default function OrdersTab() {
 
   useFocusEffect(useCallback(() => { setLoading(true); loadOrders(); }, [loadOrders]));
   const onRefresh = () => { setRefreshing(true); loadOrders(); };
+
+  // This app has no separate per-order detail screen — orders are viewed
+  // inline right here in the list. So "the customer opened the order" is
+  // approximated as "this tab loaded with that order visible", which is
+  // the practical equivalent given the app's actual structure. This stops
+  // both the in-app looping alarm (see OrderAlarmController, which polls
+  // this same acknowledgment flag) and the server-side repeat pushes
+  // (see the order-alert-repeats scheduled job) for this specific order.
+  useEffect(() => {
+    const toAcknowledge = orders.filter(
+      (o) => o.status === 'Arrived at Dropoff' && !o.customer_arrival_acknowledged_at
+    );
+    if (toAcknowledge.length === 0) return;
+    supabase
+      .from('orders')
+      .update({ customer_arrival_acknowledged_at: new Date().toISOString() })
+      .in('id', toAcknowledge.map((o) => o.id))
+      .then(({ error }) => {
+        if (error) console.warn('Failed to acknowledge arrival:', error.message);
+      });
+  }, [orders]);
 
   if (loading) {
     return (

@@ -2,6 +2,7 @@ import { Redirect, Stack } from 'expo-router';
 import type { RelativePathString } from 'expo-router';
 import { useSession } from '@/ctx';
 import { ActivityIndicator, View } from 'react-native';
+import { OrderAlarmController } from '@/components/OrderAlarmController';
 
 export default function AppLayout() {
   const { session, isLoading } = useSession();
@@ -21,14 +22,20 @@ export default function AppLayout() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="vendor/[id]" />
-      <Stack.Screen name="checkout" />
-      <Stack.Screen name="vendor-menu" />
-      <Stack.Screen name="vendor-wallet" />
-      <Stack.Screen name="vendor-orders" />
-      <Stack.Screen name="operator-orders" />
-    </Stack>
+    <>
+      {/* Mounted once here (not inside individual screens) so the order
+          alarm keeps ringing no matter which screen is currently
+          focused, for as long as the authenticated app is open. */}
+      <OrderAlarmController />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="vendor/[id]" />
+        <Stack.Screen name="checkout" />
+        <Stack.Screen name="vendor-menu" />
+        <Stack.Screen name="vendor-wallet" />
+        <Stack.Screen name="vendor-orders" />
+        <Stack.Screen name="operator-orders" />
+      </Stack>
+    </>
   );
 }

@@ -6,9 +6,11 @@ import { useCallback, useState } from 'react';
 import type { RelativePathString } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSession } from '@/ctx';
-import { getProfile, getVendors, getVendorOrders, getOperatorOrders, getVendorByOwnerId, updateVendorStatus, getAppIsOpen, setAppIsOpen } from '@/db/api';
-import type { Profile, Vendor, Order } from '@/types/types';
+import { getProfile, getVendors, getVendorOrders, getOperatorOrders, getVendorByOwnerId, updateVendorStatus, getAppIsOpen, setAppIsOpen, getActivePromotions } from '@/db/api';
+import type { Profile, Vendor, Order, Promotion } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
+import { AnnouncementBanner } from '@/components/AnnouncementBanner';
+import { PromotionsCarousel } from '@/components/PromotionsCarousel';
 const ORANGE = '#F25C19';
 const CREAM = '#FAF6F0';
 
@@ -19,20 +21,23 @@ export default function HomeTab() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [myVendor, setMyVendor] = useState<Vendor | null>(null);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [appIsOpen, setAppIsOpen] = useState(true);
 
   const loadData = useCallback(async () => {
     if (!session?.user?.id) { setLoading(false); setRefreshing(false); return; }
-    const [p, v, open] = await Promise.all([
+    const [p, v, open, promos] = await Promise.all([
       getProfile(session.user.id),
       getVendors(),
       getAppIsOpen(),
+      getActivePromotions(),
     ]);
     setProfile(p);
     setVendors(v);
     setAppIsOpen(open);
+    setPromotions(promos);
     if (p?.role === 'Vendor') {
       const vendorRecord = await getVendorByOwnerId(session.user.id);
       setMyVendor(vendorRecord);
@@ -73,7 +78,7 @@ export default function HomeTab() {
 // Vendor / Operator Dashboard
   if (profile?.role === 'Vendor' || profile?.role === 'Operator') {
     return (
-      <VendorOperatorDashboard profile={profile} orders={orders} myVendor={myVendor} onRefresh={onRefresh} refreshing={refreshing} router={router} reloadDashboard={loadData} appIsOpen={appIsOpen} />
+      <VendorOperatorDashboard profile={profile} orders={orders} myVendor={myVendor} onRefresh={onRefresh} refreshing={refreshing} router={router} reloadDashboard={loadData} appIsOpen={appIsOpen} userId={session?.user?.id ?? ''} />
     );
   }
   // Customer Home — show closed banner if app is off
@@ -87,6 +92,9 @@ export default function HomeTab() {
         <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, marginTop: 2 }}>What are you craving today?</Text>
       </View>
 
+      {/* Announcement banner — latest unread admin announcement, if any */}
+      {session?.user?.id ? <AnnouncementBanner role="Customer" userId={session.user.id} /> : null}
+
       {/* App-closed banner */}
       {!appIsOpen && (
         <View style={{ backgroundColor: '#fee2e2', margin: 16, borderRadius: 14, padding: 20, alignItems: 'center', gap: 8 }}>
@@ -97,6 +105,9 @@ export default function HomeTab() {
           </Text>
         </View>
       )}
+
+      {/* Promo/ad carousel — admin-managed, see (super-admin)/promotions.tsx */}
+      <PromotionsCarousel promotions={promotions} />
 
       <FlatList
         data={vendors}
@@ -168,12 +179,12 @@ function VendorCard({ vendor, appIsOpen, onPress }: { vendor: Vendor; appIsOpen:
 }
 
 function VendorOperatorDashboard({
-  profile, orders, myVendor, onRefresh, refreshing, router, reloadDashboard, appIsOpen,
+  profile, orders, myVendor, onRefresh, refreshing, router, reloadDashboard, appIsOpen, userId,
 }: {
   profile: Profile; orders: Order[]; myVendor: Vendor | null;
   onRefresh: () => void; refreshing: boolean;
   router: ReturnType<typeof useRouter>; reloadDashboard: () => void;
-  appIsOpen: boolean;
+  appIsOpen: boolean; userId: string;
 }) {
   const isVendor = profile.role === 'Vendor';
   const [togglingStore, setTogglingStore] = useState(false);
@@ -277,6 +288,9 @@ function VendorOperatorDashboard({
           )}
         </View>
       </View>
+
+      {/* Announcement banner — latest unread admin announcement, if any */}
+      {userId ? <AnnouncementBanner role={profile.role} userId={userId} /> : null}
 
       {/* Quick Actions */}
       <View style={{ padding: 16, gap: 12 }}>

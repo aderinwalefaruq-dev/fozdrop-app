@@ -17,7 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import {
   ShieldAlert, Users, Package, DollarSign, Store,
   Bike, RefreshCw, ChevronRight, Megaphone,
-  BarChart2, Layers, Zap, Settings2,
+  BarChart2, Layers, Zap, Settings2, ImagePlus,
 } from 'lucide-react-native';
 
 import {
@@ -132,6 +132,7 @@ export default function AdminDashboard() {
     { label: 'Users',       icon: Users,     route: '/(super-admin)/users'      },
     { label: 'Financials',  icon: DollarSign,route: '/(super-admin)/financials' },
     { label: 'Broadcast',   icon: Megaphone, route: '/(super-admin)/broadcast'  },
+    { label: 'Promotions',  icon: ImagePlus, route: '/(super-admin)/promotions' },
     { label: 'Analytics',   icon: BarChart2, route: '/(super-admin)/analytics'  },
   ] as const;
 

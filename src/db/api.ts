@@ -22,6 +22,7 @@ import type {
   TopDishData,
   HotspotData,
   Announcement,
+  Promotion,
 } from '@/types/types';
 
 // =====================
@@ -272,22 +273,14 @@ export async function placeOrder(params: {
   vendorGroups: Array<{
     vendorId: string;
     subtotal: number;
-    // Each plate is an independent basket of items from this vendor — e.g.
-    // Plate A = Jollof Rice + Egg + Salad, Plate B = Fufu + Egusi + Beef.
-    // Packaging is chosen per plate (Plate A might need a togo box while
-    // Plate B doesn't), not once for the whole vendor.
-    plates: Array<{
-      label: string;
-      items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
-      packagingRequested?: boolean;
-    }>;
+    items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
+    packagingRequested?: boolean;
   }>;
   dropoffLocationId: string;
   locationDescription: string;
   deliveryNotes: string;
   subtotal: number;
   useDeliveryPass?: boolean;
-  scheduledFor?: string | null;
 }): Promise<{ orderId: string | null; error?: string }> {
   const { data, error } = await supabase.functions.invoke('place-order', { body: params });
   if (error) {
@@ -829,4 +822,77 @@ export async function getAnnouncements(limit = 20): Promise<Announcement[]> {
     .order('created_at', { ascending: false })
     .limit(limit);
   return Array.isArray(data) ? data : [];
+}
+
+// Returns the most recent announcement targeted at this role (or 'All')
+// that this specific user hasn't dismissed yet — used to drive the
+// home-screen banner. Returns null if there's nothing new to show.
+export async function getLatestUnreadAnnouncement(role: string, userId: string): Promise<Announcement | null> {
+  const { data: announcements } = await supabase
+    .from('announcements')
+    .select('*')
+    .in('target_audience', [role, 'All'])
+    .order('created_at', { ascending: false })
+    .limit(10);
+  if (!announcements || announcements.length === 0) return null;
+
+  const { data: reads } = await supabase
+    .from('announcement_reads')
+    .select('announcement_id')
+    .eq('user_id', userId)
+    .in('announcement_id', announcements.map((a) => a.id));
+
+  const readIds = new Set((reads ?? []).map((r) => r.announcement_id));
+  return announcements.find((a) => !readIds.has(a.id)) ?? null;
+}
+
+export async function markAnnouncementRead(announcementId: string, userId: string): Promise<void> {
+  await supabase.from('announcement_reads').upsert(
+    { announcement_id: announcementId, user_id: userId },
+    { onConflict: 'announcement_id,user_id' }
+  );
+}
+
+// ── Promotions (admin-managed ad carousel) ────────────────────────────────────
+export async function getActivePromotions(): Promise<Promotion[]> {
+  const { data } = await supabase
+    .from('promotions')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminPromotions(): Promise<Promotion[]> {
+  const { data } = await supabase
+    .from('promotions')
+    .select('*')
+    .order('sort_order', { ascending: true });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function adminCreatePromotion(input: {
+  image_url: string;
+  caption?: string;
+  link_vendor_id?: string | null;
+  sort_order?: number;
+}): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('promotions').insert({
+    image_url: input.image_url,
+    caption: input.caption ?? null,
+    link_vendor_id: input.link_vendor_id ?? null,
+    sort_order: input.sort_order ?? 0,
+  });
+  return { error: error?.message ?? null };
+}
+
+export async function adminUpdatePromotion(
+  id: string,
+  updates: Partial<Pick<Promotion, 'image_url' | 'caption' | 'link_vendor_id' | 'is_active' | 'sort_order'>>
+): Promise<void> {
+  await supabase.from('promotions').update(updates).eq('id', id);
+}
+
+export async function adminDeletePromotion(id: string): Promise<void> {
+  await supabase.from('promotions').delete().eq('id', id);
 }
