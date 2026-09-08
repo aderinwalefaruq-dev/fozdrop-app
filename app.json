@@ -5,23 +5,31 @@
     "scheme": "fozdropdelivery",
     "version": "1.0.105",
     "orientation": "portrait",
-           "icon": "./assets/icon.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "buildNumber": "1",
-    "bundleIdentifier": "com.fozdrop.app",
+      "bundleIdentifier": "com.fozdrop.app",
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
-  "adaptiveIcon": {
-    "backgroundColor": "#ffffff"
-},
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
       "predictiveBackGestureEnabled": false,
       "versionCode": 1,
-      "package": "com.fozdrop.app"
+      "package": "com.fozdrop.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -48,7 +56,9 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#F25C19",
-          "sounds": ["./assets/sounds/order_alert.wav"]
+          "sounds": [
+            "./assets/sounds/order_alert.wav"
+          ]
         }
       ],
       [
@@ -63,6 +73,12 @@
     },
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a7e30cb7-8b0c-4626-9efa-272150873b74"
+      }
     }
   }
 }
