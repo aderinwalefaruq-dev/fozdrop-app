@@ -45,6 +45,16 @@ Deno.serve(async (req) => {
       if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
         return json({ error: "Scheduled delivery time must be a valid time in the future" }, 400);
       }
+      // Mirror the 11am-8pm same-day window enforced client-side (see
+      // src/lib/utils/schedule.ts). Checked specifically in Africa/Lagos
+      // time (fixed UTC+1, no DST) rather than whatever timezone this
+      // edge function happens to run in.
+      const lagosHour = Number(
+        new Intl.DateTimeFormat("en-NG", { timeZone: "Africa/Lagos", hour: "numeric", hour12: false }).format(d)
+      );
+      if (lagosHour < 11 || lagosHour >= 20) {
+        return json({ error: "Scheduled delivery is only available between 11:00 AM and 8:00 PM" }, 400);
+      }
       scheduledForDate = d.toISOString();
     }
 

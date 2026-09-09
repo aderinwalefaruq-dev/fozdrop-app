@@ -11,7 +11,10 @@
     },
     "preview": {
       "node": "22.13.0",
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "node": "22.13.0",

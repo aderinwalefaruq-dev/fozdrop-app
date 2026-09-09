@@ -10,7 +10,8 @@ import { getWallet, getDropoffLocations, placeOrder, getAppIsOpen, getDeliveryFe
 import { useCart } from '@/context/CartContext';
 import type { Wallet, CampusDropoffLocation } from '@/types/types';
 import { formatNaira } from '@/lib/utils/format';
-import { getUpcomingTimeSlots, formatSlotTime } from '@/lib/utils/schedule';
+import { formatSlotTime, getEarliestSchedulableTime, hasSchedulingWindowLeftToday, isValidScheduledTime } from '@/lib/utils/schedule';
+import { TimeWheelPicker } from '@/components/TimeWheelPicker';
 
 const ORANGE = '#F25C19';
 const CREAM = '#FAF6F0';
@@ -39,6 +40,9 @@ export default function CheckoutScreen() {
   const [packagingFeeUnit, setPackagingFeeUnit] = useState(200);
   const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [pickerHour, setPickerHour] = useState<number>(() => getEarliestSchedulableTime().getHours());
+  const [pickerMinute, setPickerMinute] = useState<number>(() => getEarliestSchedulableTime().getMinutes());
+  const [timeError, setTimeError] = useState('');
 
   const packagingFee = plates.filter((p) => packPlates[p.id]).length * packagingFeeUnit;
   const totalPrice = subtotal + deliveryFee + packagingFee;
@@ -169,14 +173,26 @@ export default function CheckoutScreen() {
 
         {/* Delivery Time */}
         <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 }}>
-          <Text style={{ fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 10 }}>⏰ Delivery Time</Text>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 2 }}>⏰ Delivery Time</Text>
+          <Text style={{ fontSize: 11, color: '#999', marginBottom: 10 }}>Scheduled delivery available 11:00 AM – 8:00 PM</Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable onPress={() => setScheduledFor(null)}
               style={{ flex: 1, borderWidth: 1.5, borderColor: !scheduledFor ? ORANGE : '#ddd', backgroundColor: !scheduledFor ? '#fff7ed' : '#fff',
                 borderRadius: 10, padding: 12, alignItems: 'center' }}>
               <Text style={{ fontSize: 13, fontWeight: '700', color: !scheduledFor ? ORANGE : '#555' }}>🚀 ASAP</Text>
             </Pressable>
-            <Pressable onPress={() => setShowTimePicker(true)}
+            <Pressable
+              onPress={() => {
+                if (!hasSchedulingWindowLeftToday()) {
+                  setTimeError("Today's scheduling window (11:00 AM – 8:00 PM) has closed.");
+                  return;
+                }
+                setTimeError('');
+                const base = scheduledFor ?? getEarliestSchedulableTime();
+                setPickerHour(base.getHours());
+                setPickerMinute(base.getMinutes());
+                setShowTimePicker(true);
+              }}
               style={{ flex: 1, borderWidth: 1.5, borderColor: scheduledFor ? ORANGE : '#ddd', backgroundColor: scheduledFor ? '#fff7ed' : '#fff',
                 borderRadius: 10, padding: 12, alignItems: 'center' }}>
               <Text style={{ fontSize: 13, fontWeight: '700', color: scheduledFor ? ORANGE : '#555' }}>
@@ -184,6 +200,7 @@ export default function CheckoutScreen() {
               </Text>
             </Pressable>
           </View>
+          {timeError ? <Text style={{ color: '#dc2626', fontSize: 11, marginTop: 8 }}>{timeError}</Text> : null}
         </View>
 
         {/* Per-vendor order sections, each broken down by plate */}
@@ -417,24 +434,42 @@ export default function CheckoutScreen() {
         </View>
       </Modal>
 
-      {/* Delivery Time Picker Modal */}
+      {/* Delivery Time Picker — a custom scrollable hour/minute wheel
+          built with plain FlatList, no native picker dependency. Same
+          UI on both platforms. The picked time is validated against the
+          11am-8pm window + minimum lead time before being accepted. */}
       <Modal visible={showTimePicker} transparent animationType="slide" onRequestClose={() => setShowTimePicker(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setShowTimePicker(false)} />
-        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '60%' }}>
-          <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' }}>
-            <View style={{ width: 40, height: 4, backgroundColor: '#e5e5e5', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
-            <Text style={{ fontSize: 17, fontWeight: '800', color: '#1a1a1a' }}>Choose a delivery time</Text>
+        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 }}>
+          <View style={{ width: 40, height: 4, backgroundColor: '#e5e5e5', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+          <Text style={{ fontSize: 17, fontWeight: '800', color: '#1a1a1a', textAlign: 'center' }}>Choose a delivery time</Text>
+          <Text style={{ fontSize: 12, color: '#888', textAlign: 'center', marginTop: 4 }}>Available 11:00 AM – 8:00 PM</Text>
+
+          <View style={{ marginTop: 12 }}>
+            <TimeWheelPicker
+              hour24={pickerHour}
+              minute={pickerMinute}
+              onChangeHour24={setPickerHour}
+              onChangeMinute={setPickerMinute}
+            />
           </View>
-          <ScrollView>
-            {getUpcomingTimeSlots().map((slot) => (
-              <Pressable key={slot.toISOString()}
-                onPress={() => { setScheduledFor(slot); setShowTimePicker(false); }}
-                style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#f5f5f5', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: scheduledFor?.getTime() === slot.getTime() ? ORANGE : '#ddd' }} />
-                <Text style={{ fontSize: 14, color: '#1a1a1a' }}>{formatSlotTime(slot)}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+
+          {timeError ? <Text style={{ color: '#dc2626', fontSize: 12, textAlign: 'center', marginTop: 8 }}>{timeError}</Text> : null}
+
+          <Pressable
+            onPress={() => {
+              const candidate = new Date();
+              candidate.setHours(pickerHour, pickerMinute, 0, 0);
+              const check = isValidScheduledTime(candidate);
+              if (!check.valid) { setTimeError(check.reason ?? 'Invalid time'); return; }
+              setTimeError('');
+              setScheduledFor(candidate);
+              setShowTimePicker(false);
+            }}
+            style={{ backgroundColor: ORANGE, borderRadius: 12, padding: 15, alignItems: 'center', marginTop: 16 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Confirm Time</Text>
+          </Pressable>
         </View>
       </Modal>
 
