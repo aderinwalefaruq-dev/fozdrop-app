@@ -45,6 +45,13 @@ Deno.serve(async (req) => {
       if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
         return json({ error: "Scheduled delivery time must be a valid time in the future" }, 400);
       }
+      // Mirror the 1-hour minimum lead time enforced client-side (see
+      // MIN_LEAD_MINUTES in src/lib/utils/schedule.ts — kept in sync by
+      // hand since this edge function can't import that RN-side file).
+      const MIN_LEAD_MS = 60 * 60 * 1000;
+      if (d.getTime() < Date.now() + MIN_LEAD_MS) {
+        return json({ error: "Scheduled delivery time must be at least 1 hour from now" }, 400);
+      }
       // Mirror the 11am-8pm same-day window enforced client-side (see
       // src/lib/utils/schedule.ts). Checked specifically in Africa/Lagos
       // time (fixed UTC+1, no DST) rather than whatever timezone this
