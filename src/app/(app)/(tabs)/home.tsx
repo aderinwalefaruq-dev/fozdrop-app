@@ -28,16 +28,38 @@ export default function HomeTab() {
 
   const loadData = useCallback(async () => {
     if (!session?.user?.id) { setLoading(false); setRefreshing(false); return; }
-    const [p, v, open, promos] = await Promise.all([
+
+    // Promise.allSettled — unlike Promise.all, one failing query here no
+    // longer prevents the others from updating state. A broken/missing
+    // table, an RLS-blocked query, or a bad column name in any single
+    // call (e.g. getActivePromotions) used to silently blank the ENTIRE
+    // home screen for every role, since Promise.all rejects as a whole
+    // the moment any one promise rejects — and setVendors/setLoading
+    // never ran because they sat after that line. Now each result is
+    // handled independently: a broken section shows empty/default
+    // instead of taking the whole screen down with it.
+    const [pRes, vRes, openRes, promosRes] = await Promise.allSettled([
       getProfile(session.user.id),
       getVendors(),
       getAppIsOpen(),
       getActivePromotions(),
     ]);
+
+    const p = pRes.status === 'fulfilled' ? pRes.value : null;
+    const v = vRes.status === 'fulfilled' ? vRes.value : [];
+    const open = openRes.status === 'fulfilled' ? openRes.value : true;
+    const promos = promosRes.status === 'fulfilled' ? promosRes.value : [];
+
+    if (pRes.status === 'rejected') console.error('getProfile failed:', pRes.reason);
+    if (vRes.status === 'rejected') console.error('getVendors failed:', vRes.reason);
+    if (openRes.status === 'rejected') console.error('getAppIsOpen failed:', openRes.reason);
+    if (promosRes.status === 'rejected') console.error('getActivePromotions failed:', promosRes.reason);
+
     setProfile(p);
     setVendors(v);
     setAppIsOpen(open);
     setPromotions(promos);
+
     if (p?.role === 'Vendor') {
       const vendorRecord = await getVendorByOwnerId(session.user.id);
       setMyVendor(vendorRecord);
