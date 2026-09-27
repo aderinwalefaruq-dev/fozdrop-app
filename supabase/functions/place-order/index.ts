@@ -32,30 +32,31 @@ Deno.serve(async (req) => {
       scheduledFor,    // ISO string or null/undefined — customer-requested delivery time
     } = body;
 
-    if (!customerId || !Array.isArray(vendorGroups) || vendorGroups.length === 0 || !dropoffLocationId || !subtotal) {
+    // ✅ FIXED: Explicitly allow subtotal to be 0 (e.g., ₦0 items or soups)
+    if (
+      !customerId ||
+      !Array.isArray(vendorGroups) ||
+      vendorGroups.length === 0 ||
+      !dropoffLocationId ||
+      subtotal === undefined ||
+      subtotal === null ||
+      typeof subtotal !== "number" ||
+      subtotal < 0
+    ) {
       return json({ error: "Missing required fields" }, 400);
     }
 
-    // Validate the scheduled time server-side — never trust the client alone
-    // for something that changes operational behavior (the client already
-    // restricts choices to future slots, but that's UX, not enforcement).
+    // Validate the scheduled time server-side
     let scheduledForDate: string | null = null;
     if (scheduledFor) {
       const d = new Date(scheduledFor);
       if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
         return json({ error: "Scheduled delivery time must be a valid time in the future" }, 400);
       }
-      // Mirror the 1-hour minimum lead time enforced client-side (see
-      // MIN_LEAD_MINUTES in src/lib/utils/schedule.ts — kept in sync by
-      // hand since this edge function can't import that RN-side file).
       const MIN_LEAD_MS = 60 * 60 * 1000;
       if (d.getTime() < Date.now() + MIN_LEAD_MS) {
         return json({ error: "Scheduled delivery time must be at least 1 hour from now" }, 400);
       }
-      // Mirror the 11am-8pm same-day window enforced client-side (see
-      // src/lib/utils/schedule.ts). Checked specifically in Africa/Lagos
-      // time (fixed UTC+1, no DST) rather than whatever timezone this
-      // edge function happens to run in.
       const lagosHour = Number(
         new Intl.DateTimeFormat("en-NG", { timeZone: "Africa/Lagos", hour: "numeric", hour12: false }).format(d)
       );
@@ -81,7 +82,7 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // ── Read service fees from app_settings (admin-configurable) ─────────
+    // ── Read service fees from app_settings ─────────────────────────────
     const { data: feeRow } = await svc
       .from("app_settings")
       .select("value")
@@ -96,7 +97,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
     const PACKAGING_FEE_UNIT = packagingFeeRow?.value ? Number(packagingFeeRow.value) : 200;
 
-    // ── Resolve free delivery pass (at most 1 per order) ─────────────────
+    // ── Resolve free delivery pass ───────────────────────────────────────
     let passId: string | null = null;
     const effectiveDeliveryFee = useDeliveryPass ? 0 : DELIVERY_FEE;
 
@@ -108,7 +109,7 @@ Deno.serve(async (req) => {
         .eq("user_id", customerId)
         .eq("is_used", false)
         .gt("expires_at", now)
-        .order("expires_at", { ascending: true }) // consume soonest-expiring first
+        .order("expires_at", { ascending: true })
         .limit(1)
         .maybeSingle();
 
@@ -118,8 +119,7 @@ Deno.serve(async (req) => {
       passId = pass.id;
     }
 
-    // Total packaging fee across every plate, across every vendor group,
-    // that opted in — packaging is a per-plate choice now, not per vendor.
+    // Total packaging fee calculation across plates
     type PackagingPlateInput = { items?: unknown[]; packagingRequested?: boolean };
     type PackagingGroupInput = { plates?: PackagingPlateInput[] };
     const totalPackagingFee = (vendorGroups as PackagingGroupInput[]).reduce((sum, g) => {
@@ -132,10 +132,7 @@ Deno.serve(async (req) => {
 
     const totalPrice = Number(subtotal) + effectiveDeliveryFee + totalPackagingFee;
 
-    // Check customer balance (existence only — the actual debit below is
-    // atomic and re-checks sufficiency at the database level, closing the
-    // race window where two concurrent orders could both pass this check
-    // against the same stale balance).
+    // Check customer balance
     const { data: customerWallet, error: walletErr } = await svc
       .from("wallets")
       .select("id, customer_balance")
@@ -159,9 +156,6 @@ Deno.serve(async (req) => {
       const { vendorId, subtotal: vendorSubtotal, plates } = group;
       if (!vendorId || !Array.isArray(plates) || plates.length === 0) continue;
 
-      // Flatten this vendor's plates into order_item rows, keeping each
-      // row tagged with which plate it belongs to. Skip empty plates
-      // (e.g. one the customer created but never added items to).
       type PlateInput = {
         label: string;
         items: Array<{ menuId: string; itemName: string; price: number; quantity: number }>;
@@ -174,26 +168,21 @@ Deno.serve(async (req) => {
         plate.items.map((item) => ({
           menu_id: item.menuId,
           item_name: item.itemName,
-          price: item.price,
+          price: Number(item.price ?? 0),
           quantity: item.quantity,
           plate_label: plate.label,
         }))
       );
       if (orderItemRows.length === 0) continue;
 
-      // Packaging is chosen per plate — sum the fee across every plate in
-      // THIS order that opted in, and record which plate labels were
-      // packed so the vendor/operator can see exactly which plate needs
-      // a togo box.
       const packedPlates = nonEmptyPlates.filter((plate) => plate.packagingRequested);
       const orderPackagingFee = packedPlates.length * PACKAGING_FEE_UNIT;
       const platePackaging: Record<string, boolean> = {};
       nonEmptyPlates.forEach((plate) => { platePackaging[plate.label] = !!plate.packagingRequested; });
 
-      // Delivery fee only on the first order; subsequent orders ₦0
       const isFirst = orderIds.length === 0;
       const orderDeliveryFee = isFirst ? effectiveDeliveryFee : 0;
-      const orderTotal = Number(vendorSubtotal) + orderDeliveryFee + orderPackagingFee;
+      const orderTotal = Number(vendorSubtotal ?? 0) + orderDeliveryFee + orderPackagingFee;
 
       // Insert order
       const { data: orderData, error: orderErr } = await svc
@@ -206,7 +195,7 @@ Deno.serve(async (req) => {
           dropoff_location_id: dropoffLocationId,
           location_description: locationDescription ?? "",
           delivery_notes: deliveryNotes ?? "",
-          subtotal: Number(vendorSubtotal),
+          subtotal: Number(vendorSubtotal ?? 0),
           delivery_fee: orderDeliveryFee,
           packaging_fee: orderPackagingFee,
           plate_packaging: platePackaging,
@@ -217,7 +206,6 @@ Deno.serve(async (req) => {
         .select("id")
         .maybeSingle();
 
-
       if (orderErr || !orderData) {
         console.error("Order insert error:", orderErr);
         return json({ error: "Failed to create order: " + (orderErr?.message ?? "unknown") }, 500);
@@ -225,13 +213,12 @@ Deno.serve(async (req) => {
 
       orderIds.push(orderData.id);
 
-      // Insert order items, each tagged with its plate_label
+      // Insert order items
       await svc.from("order_items").insert(
         orderItemRows.map((row) => ({ ...row, order_id: orderData.id }))
       );
 
-      // Credit vendor wallet with their subtotal + any packaging fee
-      // (they're the ones sourcing and preparing the packaging).
+      // Credit vendor wallet
       const { data: vendorData } = await svc
         .from("vendors")
         .select("owner_id")
@@ -246,31 +233,30 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (vendorWallet) {
-          const vendorCreditAmount = Number(vendorSubtotal) + orderPackagingFee;
-          await svc.rpc("adjust_wallet_balance", {
-            p_user_id: vendorData.owner_id,
-            p_column: "vendor_balance",
-            p_delta: vendorCreditAmount,
-            p_require_sufficient: false,
-          });
+          const vendorCreditAmount = Number(vendorSubtotal ?? 0) + orderPackagingFee;
+          if (vendorCreditAmount > 0) {
+            await svc.rpc("adjust_wallet_balance", {
+              p_user_id: vendorData.owner_id,
+              p_column: "vendor_balance",
+              p_delta: vendorCreditAmount,
+              p_require_sufficient: false,
+            });
 
-          await svc.from("transactions").insert({
-            wallet_id: vendorWallet.id,
-            amount: vendorCreditAmount,
-            transaction_type: "Credit",
-            reference_id: groupRef,
-            description: orderPackagingFee > 0
-              ? `Order received (incl. ₦${orderPackagingFee} packaging): ${groupRef}`
-              : `Order received: ${groupRef}`,
-          });
+            await svc.from("transactions").insert({
+              wallet_id: vendorWallet.id,
+              amount: vendorCreditAmount,
+              transaction_type: "Credit",
+              reference_id: groupRef,
+              description: orderPackagingFee > 0
+                ? `Order received (incl. ₦${orderPackagingFee} packaging): ${groupRef}`
+                : `Order received: ${groupRef}`,
+            });
+          }
         }
       }
     }
 
-    // Deduct customer once — total subtotal + one delivery fee + packaging.
-    // Atomic + re-checks sufficiency at the DB level so two concurrent
-    // "Place Order" taps (or a double network retry) can't both succeed
-    // against the same stale balance and overdraw the wallet.
+    // Deduct customer wallet
     const { data: balanceAfterDebit, error: debitErr } = await svc.rpc("adjust_wallet_balance", {
       p_user_id: customerId,
       p_column: "customer_balance",
@@ -279,25 +265,24 @@ Deno.serve(async (req) => {
     });
 
     if (debitErr || balanceAfterDebit === null) {
-      console.error("Customer debit failed (likely insufficient balance at commit time):", debitErr);
-      // Best-effort compensation: the orders/items already inserted above
-      // could not be safely un-created without a transaction, so mark
-      // them Cancelled and reverse any vendor credits already applied.
+      console.error("Customer debit failed:", debitErr);
       for (const oid of orderIds) {
         await svc.from("orders").update({ status: "Cancelled" }).eq("id", oid);
       }
       return json({ error: "Payment failed — insufficient wallet balance. Your order was not placed." }, 400);
     }
 
-    await svc.from("transactions").insert({
-      wallet_id: customerWallet.id,
-      amount: totalPrice,
-      transaction_type: "Debit",
-      reference_id: groupRef,
-      description: `Order payment: ${groupRef}`,
-    });
+    if (totalPrice > 0) {
+      await svc.from("transactions").insert({
+        wallet_id: customerWallet.id,
+        amount: totalPrice,
+        transaction_type: "Debit",
+        reference_id: groupRef,
+        description: `Order payment: ${groupRef}`,
+      });
+    }
 
-    // Credit platform with the delivery fee (₦0 if pass used)
+    // Credit platform with delivery fee
     if (effectiveDeliveryFee > 0) {
       const { data: platformSetting } = await svc
         .from("app_settings")
@@ -331,7 +316,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Mark pass as used ─────────────────────────────────────────────────
+    // Mark pass as used
     if (passId) {
       await svc
         .from("free_delivery_passes")
@@ -339,11 +324,10 @@ Deno.serve(async (req) => {
         .eq("id", passId);
     }
 
-    // ── Check if this is the referee's first completed order → award referral ──
+    // Check referral
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Count prior paid orders by this customer (before this one)
     const { count: priorOrders } = await svc
       .from("orders")
       .select("id", { count: "exact", head: true })
@@ -352,7 +336,6 @@ Deno.serve(async (req) => {
       .not("id", "in", `(${orderIds.join(",") || "00000000-0000-0000-0000-000000000000"})`);
 
     if ((priorOrders ?? 0) === 0) {
-      // This IS their first order — check if they were referred
       fetch(`${supabaseUrl}/functions/v1/award-referral`, {
         method: "POST",
         headers: {
@@ -360,23 +343,16 @@ Deno.serve(async (req) => {
           "Authorization": `Bearer ${serviceKey}`,
         },
         body: JSON.stringify({ refereeId: customerId, orderId: groupRef }),
-      }).catch(() => {/* non-blocking */});
+      }).catch(() => {});
     }
 
-    // Mention the scheduled time (if any) in vendor/operator notification text,
-    // so they know not to rush a pre-order. Note: this still sends the
-    // notification immediately at order-placement time — actually *delaying*
-    // the notification until closer to the scheduled time would need a
-    // separate cron job, which is not implemented here.
     const scheduleText = scheduledForDate
       ? ` for ${new Date(scheduledForDate).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" })}`
       : "";
 
-    // ── Fire push notifications (non-blocking) ────────────────────────────
-    // Notify vendor(s) + all operators about the new order(s)
+    // Send push notifications
     for (const group of vendorGroups) {
       const { vendorId, subtotal: vendorSubtotal } = group;
-      // Resolve vendor name for the notification body
       const { data: vendorInfo } = await svc
         .from("vendors")
         .select("name, owner_id")
@@ -385,9 +361,8 @@ Deno.serve(async (req) => {
 
       const vendorName = vendorInfo?.name ?? "a vendor";
       const shortRef   = groupRef;
-      const amount     = formatNairaServer(vendorSubtotal);
+      const amount     = formatNairaServer(vendorSubtotal ?? 0);
 
-      // Notify the specific vendor owner
       if (vendorInfo?.owner_id) {
         fetch(`${supabaseUrl}/functions/v1/send-push`, {
           method: "POST",
@@ -402,10 +377,9 @@ Deno.serve(async (req) => {
             body: `Order #${shortRef} has been placed${scheduleText}. Tap to view and prepare.`,
             url: "/vendor-orders",
           }),
-        }).catch(() => {/* non-blocking */});
+        }).catch(() => {});
       }
 
-      // Notify all Operators
       fetch(`${supabaseUrl}/functions/v1/send-push`, {
         method: "POST",
         headers: {
@@ -419,9 +393,8 @@ Deno.serve(async (req) => {
           body: `Order #${shortRef} was placed at ${vendorName} for ${amount}${scheduleText}.`,
           url: "/operator-orders",
         }),
-      }).catch(() => {/* non-blocking */});
+      }).catch(() => {});
     }
-    // ─────────────────────────────────────────────────────────────────────
 
     return json({ success: true, orderIds, groupRef });
   } catch (err) {
@@ -431,5 +404,5 @@ Deno.serve(async (req) => {
 });
 
 function formatNairaServer(amount: number): string {
-  return "₦" + Number(amount).toLocaleString("en-NG", { minimumFractionDigits: 0 });
+  return "₦" + Number(amount ?? 0).toLocaleString("en-NG", { minimumFractionDigits: 0 });
 }
