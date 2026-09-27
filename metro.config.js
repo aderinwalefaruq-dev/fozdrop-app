@@ -1,6 +1,7 @@
+// metro.config.js
 const { getDefaultConfig } = require('expo/metro-config');
-const { withDevkit } = require('miaoda-expo-devkit/metro');
 
+/** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
-module.exports = withDevkit(config);
+module.exports = config;
