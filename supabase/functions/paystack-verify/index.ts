@@ -1,4 +1,4 @@
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -7,7 +7,8 @@ const corsHeaders = {
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
-    status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -18,47 +19,47 @@ function json(data: unknown, status = 200) {
  *   fee is capped at ₦2,000
  *
  * Paystack verify response includes:
- *   amount          = gross amount charged to card (kobo) — includes fee
+ *   amount           = gross amount charged to card (kobo) — includes fee
  *   requested_amount = net amount the merchant requested (kobo) — what customer intended to top up
- *   fees            = Paystack's actual fee (kobo)
+ *   fees             = Paystack's actual fee (kobo)
  *
  * WALLET CREDIT = requested_amount (what the user intended to add)
  * FEE TRACKING  = fees field (actual Paystack charge)
  */
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
 
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) return json({ error: 'Unauthorized' }, 401);
 
     const { reference, userId } = await req.json();
-    if (!reference || !userId) return json({ error: 'reference and userId are required' }, 400);
+    if (!reference || !userId) {
+      return json({ error: 'reference and userId are required' }, 400);
+    }
 
-    // SECURITY: verify the caller actually IS the user they're asking us
-    // to credit. Reference IDs are returned to the client by
-    // paystack-initialize and are not secret, so without this check any
-    // signed-in user who learns another user's (successful) payment
-    // reference — e.g. by guessing, or simply being first to call this
-    // endpoint before the rightful owner's client does — could redirect
-    // that top-up into their own wallet by passing their own userId
-    // alongside someone else's reference.
+    // SECURITY: verify caller's JWT matches the target userId
     const token = authHeader.replace('Bearer ', '').trim();
     const anonClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: `Bearer ${token}` } } }
     );
+    
     const { data: { user }, error: callerErr } = await anonClient.auth.getUser();
     if (callerErr || !user || user.id !== userId) {
       return json({ error: 'Unauthorized' }, 401);
     }
 
     const PAYSTACK_SECRET_KEY = Deno.env.get('PAYSTACK_SECRET_KEY');
-    if (!PAYSTACK_SECRET_KEY) return json({ error: 'Paystack not configured' }, 500);
+    if (!PAYSTACK_SECRET_KEY) {
+      return json({ error: 'Paystack not configured' }, 500);
+    }
 
-    // Verify with Paystack
+    // Verify transaction with Paystack API
     const res = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
       headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
     });
@@ -70,12 +71,9 @@ Deno.serve(async (req) => {
 
     const txData = data.data;
 
-    // ── Fee-correct amount calculation ───────────────────────────────────────
-    // requested_amount = what the user intended to top up (net, no fee)
-    // fees             = actual Paystack processing fee
-    // amount           = gross charged (requested_amount + fees) — DO NOT credit this
-    const netNaira  = Number(txData.requested_amount ?? txData.amount) / 100;
-    const feeNaira  = Number(txData.fees ?? 0) / 100;
+    // Fee-correct calculations
+    const netNaira = Number(txData.requested_amount ?? txData.amount) / 100;
+    const feeNaira = Number(txData.fees ?? 0) / 100;
     const grossNaira = Number(txData.amount) / 100;
 
     console.log(`paystack-verify: ref=${reference} gross=₦${grossNaira} net=₦${netNaira} fee=₦${feeNaira}`);
@@ -85,13 +83,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Idempotency: atomically claim this reference before doing anything
-    // else. Uses the SAME claim table as the paystack-webhook function
-    // (migration 00032) — both paths can be triggered for the same
-    // payment (webhook fires server-side; the client also calls this
-    // verify endpoint after the checkout redirect), so they must share
-    // one atomic claim mechanism or one of them can double-credit the
-    // wallet after the other has already paid out.
+    // Idempotency: claim this reference to prevent double-crediting
     const { error: claimErr } = await supabase
       .from('processed_payment_references')
       .insert({ reference });
@@ -108,7 +100,7 @@ Deno.serve(async (req) => {
     const releaseClaim = () =>
       supabase.from('processed_payment_references').delete().eq('reference', reference);
 
-    // Get wallet
+    // Fetch user wallet
     const { data: wallet } = await supabase
       .from('wallets')
       .select('id, fees_collected')
@@ -120,8 +112,7 @@ Deno.serve(async (req) => {
       return json({ error: 'Wallet not found' }, 404);
     }
 
-    // Credit wallet with NET amount only (not gross) — atomic against any
-    // concurrent balance change on the same wallet.
+    // Atomic balance update
     const { data: newBalance, error: creditErr } = await supabase.rpc('adjust_wallet_balance', {
       p_user_id: userId,
       p_column: 'customer_balance',
@@ -135,14 +126,13 @@ Deno.serve(async (req) => {
       return json({ error: 'Failed to credit wallet' }, 500);
     }
 
-    // fees_collected is an internal accounting figure (not spendable
-    // balance), so a plain update is an acceptable trade-off here.
+    // Track platform/paystack fee total
     await supabase
       .from('wallets')
       .update({ fees_collected: Number(wallet.fees_collected ?? 0) + feeNaira })
       .eq('user_id', userId);
 
-    // Log the credit transaction (net amount)
+    // Record credit transaction
     await supabase.from('transactions').insert({
       wallet_id: wallet.id,
       amount: netNaira,
