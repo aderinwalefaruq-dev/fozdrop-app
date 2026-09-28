@@ -5,6 +5,7 @@ const ITEM_HEIGHT = 44;
 const VISIBLE_ITEMS = 5; // odd number so there's a true center row
 const PICKER_HEIGHT = ITEM_HEIGHT * VISIBLE_ITEMS;
 const CENTER_INDEX = Math.floor(VISIBLE_ITEMS / 2);
+const SCROLL_SETTLE_MS = 120;
 
 const ORANGE = '#F25C19';
 
@@ -17,13 +18,34 @@ function WheelColumn({
   width?: number;
 }) {
   const listRef = useRef<FlatList<string>>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const index = Math.round(e.nativeEvent.contentOffset.y / ITEM_HEIGHT);
+  const commitIndex = (offsetY: number) => {
+    const index = Math.round(offsetY / ITEM_HEIGHT);
     const clamped = Math.max(0, Math.min(data.length - 1, index));
     onChange(clamped);
     // Snap precisely even if momentum stopped slightly off-center
     listRef.current?.scrollToOffset({ offset: clamped * ITEM_HEIGHT, animated: true });
+  };
+
+  const handleScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    commitIndex(e.nativeEvent.contentOffset.y);
+  };
+
+  // Web fallback: react-native-web's onMomentumScrollEnd doesn't
+  // reliably fire for mouse-wheel/trackpad scrolling (it's built around
+  // touch momentum physics, which the web doesn't have). Without this,
+  // scrolling on web looks like it works but never actually commits a
+  // new value — the picker silently keeps whatever it opened with.
+  // This watches every scroll event and, once no further scroll event
+  // arrives for SCROLL_SETTLE_MS, treats that as "the user stopped
+  // scrolling" and commits the centered value — same end result as the
+  // native event, just detected a different way. Harmless on native
+  // too, since onMomentumScrollEnd already commits first there.
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetY = e.nativeEvent.contentOffset.y;
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => commitIndex(offsetY), SCROLL_SETTLE_MS);
   };
 
   return (
@@ -39,6 +61,8 @@ function WheelColumn({
       contentContainerStyle={{ paddingVertical: ITEM_HEIGHT * CENTER_INDEX }}
       style={{ height: PICKER_HEIGHT, width }}
       onMomentumScrollEnd={handleScrollEnd}
+      onScroll={handleScroll}
+      scrollEventThrottle={16}
       renderItem={({ item, index }) => {
         const isSelected = index === selectedIndex;
         return (
