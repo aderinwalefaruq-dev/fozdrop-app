@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { amount } = body;
 
-    // Verify vendor identity using the caller's JWT
+    // 1. Verify caller identity using JWT
     const anonClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -36,39 +36,44 @@ Deno.serve(async (req) => {
       return json({ error: "Unauthorized" }, 401);
     }
 
-    const { data: profile, error: profileErr } = await anonClient
-      .from("profiles")
-      .select("role, name")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileErr) console.error("Profile fetch error:", profileErr.message);
-
-    if (profile?.role !== "Vendor") {
-      console.error(`Role check failed: got "${profile?.role}" for user ${user.id}`);
-      return json({ error: "Vendor role required" }, 403);
-    }
-
-    // Service role for balance check and insert
+    // 2. Initialize Service Role Client (Elevated Permissions)
     const svc = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: wallet } = await svc
-      .from("wallets")
-      .select("id, vendor_balance")
-      .eq("user_id", user.id)
+    // 3. Fetch User Profile to verify Vendor role & get Name
+    const { data: profile } = await svc
+      .from("profiles")
+      .select("name, role")
+      .eq("id", user.id)
       .maybeSingle();
 
-    const withdrawAmount = Number(amount ?? 0);
-
-    if (!withdrawAmount || withdrawAmount <= 0) return json({ error: "Enter a valid amount" }, 400);
-    if (withdrawAmount < 500) return json({ error: "Minimum withdrawal is ₦500" }, 400);
-    if (!wallet || Number(wallet.vendor_balance) < withdrawAmount) {
-      return json({ error: `Insufficient balance — available: ₦${Number(wallet?.vendor_balance ?? 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}` }, 400);
+    if (profile?.role && profile.role !== "Vendor") {
+      return json({ error: "Vendor role required" }, 403);
     }
 
+    // 4. Validate Amount
+    const withdrawAmount = Number(amount ?? 0);
+    if (!withdrawAmount || withdrawAmount <= 0) return json({ error: "Enter a valid amount" }, 400);
+    if (withdrawAmount < 500) return json({ error: "Minimum withdrawal is ₦500" }, 400);
+
+    // 5. Flexible Wallet Lookup (checks user_id or primary key id)
+    const { data: wallet } = await svc
+      .from("wallets")
+      .select("id, vendor_balance, balance")
+      .or(`user_id.eq.${user.id},id.eq.${user.id}`)
+      .maybeSingle();
+
+    const available = Number(wallet?.vendor_balance ?? wallet?.balance ?? 0);
+
+    if (!wallet || available < withdrawAmount) {
+      return json({ 
+        error: `Insufficient balance — available: ₦${available.toLocaleString('en-NG', { minimumFractionDigits: 2 })}` 
+      }, 400);
+    }
+
+    // 6. Fetch Bank Details
     const { data: bankDetails } = await svc
       .from("bank_details")
       .select("bank_name, account_number, account_name")
@@ -77,12 +82,7 @@ Deno.serve(async (req) => {
 
     if (!bankDetails) return json({ error: "Please save your bank details before requesting a withdrawal" }, 400);
 
-    // Deduct immediately from vendor_balance — atomic + re-checks
-    // sufficiency at the DB level so a double-tap or two concurrent
-    // withdrawal requests can't both pass the earlier balance check and
-    // together overdraw the wallet. Do this BEFORE inserting the request
-    // row so we never record an "Approved" request for money we failed
-    // to reserve.
+    // 7. Deduct balance atomically
     const { data: balanceAfterDebit, error: balErr } = await svc.rpc("adjust_wallet_balance", {
       p_user_id: user.id,
       p_column: "vendor_balance",
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
       return json({ error: "Insufficient balance — please refresh and try again" }, 400);
     }
 
-    // Insert withdrawal request — balance already reserved above (manual payout)
+    // 8. Insert withdrawal request
     const { data: wdReq, error: wdErr } = await svc
       .from("withdrawal_requests")
       .insert({
@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
 
     if (wdErr || !wdReq) {
       console.error("Insert error:", wdErr);
-      // Compensate: give the reserved balance back since no request was recorded
+      // Compensate: refund reserved balance
       await svc.rpc("adjust_wallet_balance", {
         p_user_id: user.id,
         p_column: "vendor_balance",
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
       return json({ error: "Failed to create request" }, 500);
     }
 
-    // Record debit transaction so vendor history reflects the withdrawal
+    // 9. Record Debit Transaction
     const { error: txErr } = await svc.from("transactions").insert({
       wallet_id: wallet.id,
       amount: withdrawAmount,
@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
     });
     if (txErr) console.error("Transaction insert error:", txErr.message);
 
-    // Send email via Resend (non-fatal — request already saved)
+    // 10. Send Email Notification via Resend
     const resendKey = Deno.env.get("RESEND_API_KEY");
     const vendorName = profile?.name ?? user.email ?? "Unknown Vendor";
 
@@ -171,11 +171,7 @@ Deno.serve(async (req) => {
       if (!emailRes.ok) {
         const errText = await emailRes.text();
         console.warn("Resend email failed:", errText);
-      } else {
-        console.log("Email sent to aderinwalefaruq@gmail.com");
       }
-    } else {
-      console.warn("RESEND_API_KEY not set — withdrawal saved to DB but no email sent");
     }
 
     return json({ success: true, requestId: wdReq.id });

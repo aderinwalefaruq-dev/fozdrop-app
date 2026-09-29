@@ -6,13 +6,14 @@ import {
   View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, Switch,
 } from 'react-native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ArrowLeft, ImagePlus, Trash2 } from 'lucide-react-native';
 
-import { getAdminPromotions, adminCreatePromotion, adminUpdatePromotion, adminDeletePromotion, getVendors } from '@/db/api';
+import { getAdminPromotions, adminCreatePromotion, adminUpdatePromotion, adminDeletePromotion, uploadPromotionImage, getVendors } from '@/db/api';
 import type { Promotion, Vendor } from '@/types/types';
 
 const ORANGE = '#F25C19';
@@ -26,7 +27,7 @@ export default function AdminPromotions() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [imageUrl, setImageUrl] = useState('');
+  const [pickedImage, setPickedImage] = useState<{ uri: string; mimeType?: string } | null>(null);
   const [caption, setCaption] = useState('');
   const [linkVendorId, setLinkVendorId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -41,15 +42,42 @@ export default function AdminPromotions() {
 
   useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
 
+  const pickImage = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setMsg({ text: 'Photo library permission is needed to pick an image.', ok: false });
+      setTimeout(() => setMsg(null), 3000);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [16, 9],
+    });
+    if (!result.canceled && result.assets[0]) {
+      setPickedImage({ uri: result.assets[0].uri, mimeType: result.assets[0].mimeType });
+    }
+  };
+
   const handleAdd = async () => {
-    if (!imageUrl.trim()) {
-      setMsg({ text: 'Image URL is required.', ok: false });
+    if (!pickedImage) {
+      setMsg({ text: 'Please select an image first.', ok: false });
       setTimeout(() => setMsg(null), 3000);
       return;
     }
     setSaving(true);
+
+    const upload = await uploadPromotionImage(pickedImage.uri, pickedImage.mimeType);
+    if (!upload.url) {
+      setSaving(false);
+      setMsg({ text: upload.error ?? 'Failed to upload image.', ok: false });
+      setTimeout(() => setMsg(null), 3000);
+      return;
+    }
+
     const { error } = await adminCreatePromotion({
-      image_url: imageUrl.trim(),
+      image_url: upload.url,
       caption: caption.trim() || undefined,
       link_vendor_id: linkVendorId,
       sort_order: promotions.length,
@@ -59,7 +87,7 @@ export default function AdminPromotions() {
       setMsg({ text: 'Failed to add promotion.', ok: false });
     } else {
       setMsg({ text: '✅ Promotion added!', ok: true });
-      setImageUrl('');
+      setPickedImage(null);
       setCaption('');
       setLinkVendorId(null);
       load();
@@ -100,15 +128,28 @@ export default function AdminPromotions() {
             </View>
           )}
 
-          <Text style={{ color: '#64748b', fontSize: 11, marginBottom: 5 }}>Image URL</Text>
-          <TextInput
-            value={imageUrl}
-            onChangeText={setImageUrl}
-            placeholder="https://example.com/promo.jpg"
-            placeholderTextColor="#475569"
-            autoCapitalize="none"
-            style={{ backgroundColor: BG, color: '#fff', borderRadius: 10, padding: 12, fontSize: 14, borderWidth: 1, borderColor: BORDER, marginBottom: 12 }}
-          />
+          <Text style={{ color: '#64748b', fontSize: 11, marginBottom: 8 }}>Image</Text>
+          <Pressable
+            onPress={pickImage}
+            style={{
+              height: 150, borderRadius: 12, borderWidth: 1.5, borderColor: BORDER, borderStyle: pickedImage ? 'solid' : 'dashed',
+              backgroundColor: BG, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: 12,
+            }}
+          >
+            {pickedImage ? (
+              <Image source={{ uri: pickedImage.uri }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+            ) : (
+              <View style={{ alignItems: 'center', gap: 6 }}>
+                <ImagePlus size={26} color="#64748b" />
+                <Text style={{ color: '#64748b', fontSize: 13 }}>Tap to choose a photo</Text>
+              </View>
+            )}
+          </Pressable>
+          {pickedImage && (
+            <Pressable onPress={pickImage} style={{ alignSelf: 'flex-start', marginBottom: 12 }}>
+              <Text style={{ color: ORANGE, fontSize: 12, fontWeight: '700' }}>Choose a different photo</Text>
+            </Pressable>
+          )}
 
           <Text style={{ color: '#64748b', fontSize: 11, marginBottom: 5 }}>Caption (optional)</Text>
           <TextInput
@@ -142,11 +183,12 @@ export default function AdminPromotions() {
 
           <Pressable
             onPress={handleAdd}
-            style={{ backgroundColor: ORANGE, borderRadius: 12, padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}
+            disabled={saving}
+            style={{ backgroundColor: ORANGE, borderRadius: 12, padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: saving ? 0.7 : 1 }}
           >
             {saving ? <ActivityIndicator color="#fff" size="small" /> : <ImagePlus size={18} color="#fff" />}
             <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>
-              {saving ? 'Adding…' : 'Add Promotion'}
+              {saving ? 'Uploading…' : 'Add Promotion'}
             </Text>
           </Pressable>
         </View>

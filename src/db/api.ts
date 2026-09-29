@@ -45,10 +45,11 @@ export async function updateProfile(userId: string, updates: Partial<Profile>): 
 // Vendors
 // =====================
 export async function getVendors(): Promise<Vendor[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('vendors')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('name', { ascending: true });
+  if (error) console.error('getVendors failed:', error.message);
   return Array.isArray(data) ? data : [];
 }
 
@@ -58,12 +59,13 @@ export async function getVendorById(id: string): Promise<Vendor | null> {
 }
 
 export async function getVendorByOwnerId(ownerId: string): Promise<Vendor | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('vendors')
     .select('*')
     .eq('owner_id', ownerId)
     .maybeSingle();
-  return data;
+  if (error) console.warn('getVendorByOwnerId failed:', error.message);
+  return data ?? null;
 }
 
 export async function updateVendorStatus(id: string, status: 'Open' | 'Closed'): Promise<void> {
@@ -75,12 +77,13 @@ export async function updateVendor(id: string, updates: { name?: string; image?:
 }
 
 export async function createVendor(ownerId: string, name: string): Promise<Vendor | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('vendors')
     .insert({ owner_id: ownerId, name: name.trim(), status: 'Open', image: '' })
     .select('*')
     .maybeSingle();
-  return data;
+  if (error) console.warn('createVendor failed:', error.message);
+  return data ?? null;
 }
 
 // =====================
@@ -869,6 +872,35 @@ export async function getAdminPromotions(): Promise<Promotion[]> {
     .select('*')
     .order('sort_order', { ascending: true });
   return Array.isArray(data) ? data : [];
+}
+
+// Uploads a locally-picked image (from expo-image-picker) into the
+// "promotion-images" storage bucket and returns its public URL. This
+// replaces the old "paste an image URL" flow, which broke whenever
+// someone pasted a third-party image host's page link instead of the
+// actual direct-file link (a very easy mistake to make, and one that
+// fails completely silently from the app's point of view).
+export async function uploadPromotionImage(
+  localUri: string,
+  mimeType?: string
+): Promise<{ url: string | null; error?: string }> {
+  try {
+    const response = await fetch(localUri);
+    const arrayBuffer = await response.arrayBuffer();
+    const ext = mimeType?.split('/')[1] ?? localUri.split('.').pop()?.split('?')[0] ?? 'jpg';
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('promotion-images')
+      .upload(path, arrayBuffer, { contentType: mimeType ?? 'image/jpeg' });
+
+    if (uploadError) return { url: null, error: uploadError.message };
+
+    const { data } = supabase.storage.from('promotion-images').getPublicUrl(path);
+    return { url: data.publicUrl };
+  } catch (e) {
+    return { url: null, error: e instanceof Error ? e.message : 'Failed to upload image' };
+  }
 }
 
 export async function adminCreatePromotion(input: {

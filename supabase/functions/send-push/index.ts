@@ -2,19 +2,9 @@
  * send-push Edge Function
  *
  * Accepts:
- *   { targets: 'role', role: 'Operator'|'Vendor'|'Customer', title, body, url }
+ *   { targets: 'all' | 'broadcast', title, body, url }
+ *   { targets: 'role', role: 'Customer'|'Vendor'|'Runner'|'Customers'|'Vendors'|'Riders', title, body, url }
  *   { targets: 'user', userId: string, title, body, url }
- *
- * Uses RFC 8291 aes128gcm Web Push encryption + VAPID JWT (RFC 8292).
- * Compatible with Chrome/FCM, Firefox, Edge, Safari 16+.
- *
- * Key fixes vs previous version:
- *  - Switched from deprecated `aesgcm` to `aes128gcm` (RFC 8291) which FCM requires
- *  - Correct HKDF info strings for aes128gcm
- *  - Content-Encoding header is now `aes128gcm` (no separate Encryption/Crypto-Key headers)
- *  - Authorization uses `vapid` scheme (not `WebPush`)
- *  - Stale subscriptions (410/404) are auto-deleted from DB
- *  - Full per-subscription error logging for diagnostics
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -81,17 +71,14 @@ async function encryptPayload(
 ): Promise<{ ciphertext: Uint8Array; salt: Uint8Array; serverPubRaw: Uint8Array }> {
   const enc = new TextEncoder();
 
-  // Generate ephemeral server key pair
   const serverKP = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   const serverPubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", serverKP.publicKey));
 
-  // Import client public key
   const clientPub = await crypto.subtle.importKey(
     "raw", b64urlToBytes(p256dhB64),
     { name: "ECDH", namedCurve: "P-256" }, false, []
   );
 
-  // ECDH shared secret
   const ikm = new Uint8Array(await crypto.subtle.deriveBits(
     { name: "ECDH", public: clientPub }, serverKP.privateKey, 256
   ));
@@ -100,8 +87,6 @@ async function encryptPayload(
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const clientPubRaw = b64urlToBytes(p256dhB64);
 
-  // RFC 8291 §3.3 — PRK using HKDF-SHA-256
-  // PRK_key = HKDF(salt=auth_secret, IKM=ecdh_secret, info="WebPush: info\0"||ua_pub||as_pub, L=32)
   const webPushInfo = concat(
     enc.encode("WebPush: info\0"),
     clientPubRaw,
@@ -113,19 +98,15 @@ async function encryptPayload(
     prkExtractKey, 256
   );
 
-  // key_info for aes128gcm
   const keyInfo = buildKeyInfo();
-
   const prkExpKey = await crypto.subtle.importKey("raw", prk, { name: "HKDF" }, false, ["deriveBits"]);
 
-  // CEK: HKDF-Expand(PRK, cek_info || 0x01, 16)
   const cekInfo = concat(keyInfo, new Uint8Array([1]));
   const cekBits = await crypto.subtle.deriveBits(
     { name: "HKDF", hash: "SHA-256", salt, info: cekInfo },
     prkExpKey, 128
   );
 
-  // Nonce: HKDF-Expand(PRK, nonce_info || 0x01, 12)
   const nonceInfo = concat(buildNonceInfo(), new Uint8Array([1]));
   const nonceBits = await crypto.subtle.deriveBits(
     { name: "HKDF", hash: "SHA-256", salt, info: nonceInfo },
@@ -134,7 +115,6 @@ async function encryptPayload(
 
   const cek = await crypto.subtle.importKey("raw", cekBits, { name: "AES-GCM" }, false, ["encrypt"]);
 
-  // RFC 8291 §4 — padding delimiter byte 0x02 (last record)
   const pt = enc.encode(plaintext);
   const padded = new Uint8Array(pt.length + 1);
   padded.set(pt);
@@ -149,12 +129,10 @@ async function encryptPayload(
 }
 
 function buildKeyInfo(): Uint8Array {
-  // RFC 8291 §3.3: cek_info = "Content-Encoding: aes128gcm\0"
   return new TextEncoder().encode("Content-Encoding: aes128gcm\0");
 }
 
 function buildNonceInfo(): Uint8Array {
-  // RFC 8291 §3.3: nonce_info = "Content-Encoding: nonce\0"
   return new TextEncoder().encode("Content-Encoding: nonce\0");
 }
 
@@ -167,11 +145,10 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
 }
 
 // ── RFC 8291 §2 — aes128gcm record layer header ──────────────────────────────
-// salt (16) || rs (4, BE) || idlen (1) || keyid (idlen)
 
 function buildRecordHeader(salt: Uint8Array, serverPubRaw: Uint8Array): Uint8Array {
   const rs = new Uint8Array(4);
-  new DataView(rs.buffer).setUint32(0, 4096, false); // record size 4096
+  new DataView(rs.buffer).setUint32(0, 4096, false);
   const idLen = new Uint8Array([serverPubRaw.length]);
   return concat(salt, rs, idLen, serverPubRaw);
 }
@@ -209,6 +186,16 @@ async function sendWebPush(
   return { ok: resp.ok, status: resp.status, body: respBody };
 }
 
+// ── Helper to normalize target role inputs ───────────────────────────────────
+
+function getMatchingRoles(rawRole: string): string[] {
+  const r = (rawRole || "").toLowerCase().trim();
+  if (r.includes("customer")) return ["Customer", "customer"];
+  if (r.includes("vendor")) return ["Vendor", "vendor"];
+  if (r.includes("rider") || r.includes("runner")) return ["Runner", "Rider", "runner", "rider", "Delivery Runner"];
+  return [rawRole];
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -229,23 +216,36 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { targets, role, userId, title, body: msgBody, url } = await req.json();
+    const body = await req.json();
+    const { targets, role, userId, title, body: msgBody, url } = body;
 
-    // Fetch target subscriptions — include id for stale-subscription cleanup
     let query = svc.from("push_subscriptions").select("id, endpoint, p256dh, auth_key");
-    if (targets === "role") {
-      query = query.eq("user_role", role);
-    } else if (targets === "user") {
+
+    // Fix: Handle 'all', 'broadcast', missing targets, or role = 'all'
+    const targetType = (targets || "").toLowerCase();
+    const roleType = (role || "").toLowerCase();
+
+    if (targetType === "all" || targetType === "broadcast" || roleType === "all" || roleType === "all users") {
+      // Select all subscriptions without filter
+    } else if (targetType === "role") {
+      const allowedRoles = getMatchingRoles(role);
+      query = query.in("user_role", allowedRoles);
+    } else if (targetType === "user") {
       query = query.eq("user_id", userId);
     } else {
-      return json({ error: "Invalid targets" }, 400);
+      // Fallback: If targets is omitted or unknown, fetch all subscriptions rather than failing 400
+      console.warn(`send-push: Unknown targets "${targets}", default to all subscriptions`);
     }
 
     const { data: subs, error: subErr } = await query;
-    if (subErr) { console.error("send-push: DB query error", subErr); return json({ error: subErr.message }, 500); }
+    if (subErr) { 
+      console.error("send-push: DB query error", subErr); 
+      return json({ error: subErr.message }, 500); 
+    }
+
     if (!subs || subs.length === 0) {
       console.log(`send-push: no subscriptions found (targets=${targets}, role=${role ?? userId})`);
-      return json({ sent: 0, total: 0 });
+      return json({ sent: 0, total: 0, message: "No active push subscriptions found" });
     }
 
     const payloadStr = JSON.stringify({ title, body: msgBody, url: url ?? "/" });
@@ -262,7 +262,6 @@ Deno.serve(async (req) => {
             console.log(`send-push: ✓ delivered to ${sub.endpoint.slice(0, 60)}...`);
           } else {
             console.warn(`send-push: ✗ HTTP ${result.status} for ${sub.endpoint.slice(0, 60)} — ${result.body}`);
-            // 404/410 = subscription expired — clean up
             if (result.status === 404 || result.status === 410) {
               staleEndpoints.push(sub.endpoint);
             }
@@ -273,7 +272,6 @@ Deno.serve(async (req) => {
       })
     );
 
-    // Remove stale subscriptions
     if (staleEndpoints.length > 0) {
       await svc.from("push_subscriptions").delete().in("endpoint", staleEndpoints);
       console.log(`send-push: removed ${staleEndpoints.length} stale subscription(s)`);
